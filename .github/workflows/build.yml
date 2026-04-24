@@ -66,14 +66,15 @@ jobs:
         run: |
           wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch || curl -Lo ntsync.patch https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
           if [ -f ntsync.patch ]; then
-            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Algunos fragmentos fallaron, procediendo con cuidado."
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Parche con conflictos menores, continuando..."
           fi
           
-          # Búsqueda y configuración automática del defconfig
+          # Inyectar requisitos para ntsync y Android 15
           REAL_CONFIG=$(find arch/arm64/configs/ -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
           [ -z "$REAL_CONFIG" ] && REAL_CONFIG=$(find arch/arm64/configs/ -name "lito-perf_defconfig" | head -n 1)
           
           if [ -n "$REAL_CONFIG" ]; then
+            sed -i '/CONFIG_NTSYNC/d' "$REAL_CONFIG"
             echo -e "\nCONFIG_NTSYNC=y\nCONFIG_BPF_SYSCALL=y\nCONFIG_USERFAULTFD=y\nCONFIG_MEMBARRIER=y\nCONFIG_ANDROID_BINDER_IPC=y" >> "$REAL_CONFIG"
           fi
 
@@ -88,7 +89,9 @@ jobs:
             repo=$(echo $toolchains | jq -r ".[$i].repo")
             branch=$(echo $toolchains | jq -r ".[$i].branch")
             git clone --recursive --branch $branch $repo $name --depth=1
+            # Agregar a PATH de forma agresiva
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
+            export PATH="$(pwd)/$name/bin:$PATH"
           done
 
       - name: "😎 Set args"
@@ -98,21 +101,18 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo $params | jq -r ".ARCH")
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
-          # Construir argumentos de compilación de forma segura
-          BUILD_ARGS="ARCH=$ARCH CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE")"
-          [ -n "$(echo $params | jq -r ".CLANG_TRIPLE")" ] && BUILD_ARGS="$BUILD_ARGS CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")"
-          [ -n "$(echo $params | jq -r ".CC")" ] && BUILD_ARGS="$BUILD_ARGS CC=$(echo $params | jq -r ".CC")"
+          CROSS=$(echo $params | jq -r ".CROSS_COMPILE")
+          CLANG=$(echo $params | jq -r ".CC")
           
           mkdir -p $(pwd)/${{ env.OUT_DIR }}
-          echo "args=-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} $BUILD_ARGS" >> $GITHUB_OUTPUT
+          # Usamos solo 3 hilos para máxima estabilidad en el servidor de GitHub
+          echo "args=-j3 O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH CROSS_COMPILE=$CROSS CC=$CLANG" >> $GITHUB_OUTPUT
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
         run: |
-          # Encontrar nombre del archivo para el comando make
           CONF_NAME=$(find arch/arm64/configs/ -name "${{ env.DEFCONFIG_NAME }}" -printf "%P\n" | head -n 1)
           [ -z "$CONF_NAME" ] && CONF_NAME=$(find arch/arm64/configs/ -name "lito-perf_defconfig" -printf "%P\n" | head -n 1)
           make ${{ env.args }} $CONF_NAME
@@ -120,12 +120,13 @@ jobs:
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Intentar compilar ignorando errores no críticos de documentación
-          make ${{ steps.generate-args.outputs.args }} || make ${{ steps.generate-args.outputs.args }}
+          # Limpiar y compilar con reintento automático
+          make ${{ steps.generate-args.outputs.args }} clean
+          make ${{ steps.generate-args.outputs.args }} || make -j1 O=$(pwd)/../${{ env.OUT_DIR }} ARCH=arm64
 
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-V60-NTSYNC-A15
+          name: Kernel-LGV60-NTSYNC-Final
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/
           

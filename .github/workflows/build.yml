@@ -66,15 +66,13 @@ jobs:
         run: |
           wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch || curl -Lo ntsync.patch https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
           if [ -f ntsync.patch ]; then
-            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Parche con conflictos menores, continuando..."
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Conflicto en parche, continuando."
           fi
           
-          # Inyectar requisitos para ntsync y Android 15
           REAL_CONFIG=$(find arch/arm64/configs/ -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
           [ -z "$REAL_CONFIG" ] && REAL_CONFIG=$(find arch/arm64/configs/ -name "lito-perf_defconfig" | head -n 1)
           
           if [ -n "$REAL_CONFIG" ]; then
-            sed -i '/CONFIG_NTSYNC/d' "$REAL_CONFIG"
             echo -e "\nCONFIG_NTSYNC=y\nCONFIG_BPF_SYSCALL=y\nCONFIG_USERFAULTFD=y\nCONFIG_MEMBARRIER=y\nCONFIG_ANDROID_BINDER_IPC=y" >> "$REAL_CONFIG"
           fi
 
@@ -89,9 +87,7 @@ jobs:
             repo=$(echo $toolchains | jq -r ".[$i].repo")
             branch=$(echo $toolchains | jq -r ".[$i].branch")
             git clone --recursive --branch $branch $repo $name --depth=1
-            # Agregar a PATH de forma agresiva
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-            export PATH="$(pwd)/$name/bin:$PATH"
           done
 
       - name: "😎 Set args"
@@ -100,13 +96,23 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
+          # Extraemos los valores del JSON
           ARCH=$(echo $params | jq -r ".ARCH")
           CROSS=$(echo $params | jq -r ".CROSS_COMPILE")
-          CLANG=$(echo $params | jq -r ".CC")
+          CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")
+          CC_NAME=$(echo $params | jq -r ".CC")
           
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
           mkdir -p $(pwd)/${{ env.OUT_DIR }}
-          # Usamos solo 3 hilos para máxima estabilidad en el servidor de GitHub
-          echo "args=-j3 O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH CROSS_COMPILE=$CROSS CC=$CLANG" >> $GITHUB_OUTPUT
+          
+          # Construimos los argumentos forzando la arquitectura
+          # Esto evita el error de '-mlittle-endian' al asegurar que no use el GCC de x86
+          BUILD_ARGS="ARCH=$ARCH CROSS_COMPILE=$CROSS O=$(pwd)/${{ env.OUT_DIR }}"
+          if [ "$CC_NAME" = "clang" ]; then
+             BUILD_ARGS="$BUILD_ARGS CC=clang CLANG_TRIPLE=$CLANG_TRIPLE"
+          fi
+          
+          echo "args=-j$(nproc --all) $BUILD_ARGS" >> $GITHUB_OUTPUT
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -120,13 +126,12 @@ jobs:
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Limpiar y compilar con reintento automático
-          make ${{ steps.generate-args.outputs.args }} clean
-          make ${{ steps.generate-args.outputs.args }} || make -j1 O=$(pwd)/../${{ env.OUT_DIR }} ARCH=arm64
+          # Compilar con los argumentos generados
+          make ${{ steps.generate-args.outputs.args }}
 
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-LGV60-NTSYNC-Final
+          name: Kernel-V60-Final
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/
           

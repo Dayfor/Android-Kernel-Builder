@@ -68,33 +68,36 @@ jobs:
       - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Descargar parche con reintentos para evitar Error 8
-          wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 5 https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch || echo "Error al descargar el parche"
+          # 1. Intentar descargar el parche desde una fuente alternativa si falla la primera
+          wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch || \
+          curl -Lo ntsync.patch https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
 
-          # Aplicar el parche solo si el archivo existe
+          # 2. Aplicar el parche si existe
           if [ -f ntsync.patch ]; then
-            patch -p1 --ignore-whitespace < ntsync.patch || echo "El parche tiene conflictos, pero intentaremos continuar"
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Conflicto en el parche, se ignorará."
           fi
-          
-          # Forzar configuraciones necesarias para Android 15 y ntsync
-          # Usamos 'vendor/lito-perf_defconfig' basándonos en la estructura de Rofik
-          CONFIG_PATH="./arch/arm64/configs/vendor/lito-perf_defconfig"
-          
-          if [ -f "$CONFIG_PATH" ]; then
-            echo "Optimizando defconfig para Android 15 y ntsync..."
-            {
-              echo "CONFIG_NTSYNC=y"
-              echo "CONFIG_BPF_SYSCALL=y"
-              echo "CONFIG_USERFAULTFD=y"
-              echo "CONFIG_MEMBARRIER=y"
-              echo "CONFIG_ANDROID_BINDER_IPC=y"
-            } >> "$CONFIG_PATH"
+
+          # 3. Búsqueda automática del defconfig
+          # Buscamos el archivo que coincida con ${{ env.DEFCONFIG_NAME }} en todo arch/arm64/configs/
+          REAL_CONFIG=$(find arch/arm64/configs/ -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
+
+          if [ -z "$REAL_CONFIG" ]; then
+            # Si no lo encuentra con el nombre exacto, intentamos con lito-perf_defconfig
+            REAL_CONFIG=$(find arch/arm64/configs/ -name "lito-perf_defconfig" | head -n 1)
+          fi
+
+          if [ -n "$REAL_CONFIG" ]; then
+            echo "Configurando archivo: $REAL_CONFIG"
+            echo "CONFIG_NTSYNC=y" >> "$REAL_CONFIG"
+            echo "CONFIG_BPF_SYSCALL=y" >> "$REAL_CONFIG"
+            echo "CONFIG_USERFAULTFD=y" >> "$REAL_CONFIG"
+            echo "CONFIG_MEMBARRIER=y" >> "$REAL_CONFIG"
+            echo "CONFIG_ANDROID_BINDER_IPC=y" >> "$REAL_CONFIG"
           else
-            echo "Error: No se encontró el archivo defconfig en $CONFIG_PATH"
+            echo "Error: No se pudo encontrar ningún archivo de configuración compatible."
             exit 1
           fi
 
-          
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
         env:
@@ -106,7 +109,6 @@ jobs:
             repo=$(echo $toolchains | jq -r ".[$i].repo")
             branch=$(echo $toolchains | jq -r ".[$i].branch")
             git clone --recursive --branch $branch $repo $name --depth=1
-            echo "$(pwd)/$name/" >> $GITHUB_PATH
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
@@ -118,30 +120,24 @@ jobs:
         run: |
           ARCH=$(echo $params | jq -r ".ARCH")
           CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE")
-          CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
           args="-j$(nproc --all)"
           if [ -n "${{ env.OUT_DIR }}" ]; then
             mkdir -p $(pwd)/${{ env.OUT_DIR }}
             args="$args O=$(pwd)/${{ env.OUT_DIR }}"
           fi
-          [ -n "$ARCH" ] && args="$args ARCH=$ARCH"
-          [ -n "$CROSS_COMPILE" ] && args="$args CROSS_COMPILE=$CROSS_COMPILE"
-          [ -n "$CLANG_TRIPLE" ] && args="$args CLANG_TRIPLE=$CLANG_TRIPLE"
+          args="$args ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE"
           echo "args=$args" >> $GITHUB_OUTPUT
-
-      - name: "😋 Update KernelSU"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-          echo -e "\nCONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
-        run: make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
+        run: |
+          # Usar el mismo buscador para el comando make
+          REAL_CONFIG_NAME=$(find arch/arm64/configs/ -name "${{ env.DEFCONFIG_NAME }}" -printf "%P\n" | head -n 1)
+          [ -z "$REAL_CONFIG_NAME" ] && REAL_CONFIG_NAME=$(find arch/arm64/configs/ -name "lito-perf_defconfig" -printf "%P\n" | head -n 1)
+          make ${{ env.args }} $REAL_CONFIG_NAME
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -149,14 +145,9 @@ jobs:
           args: ${{ steps.generate-args.outputs.args }}
         run: make ${args}
 
-      - name: "💛 Upload Artifacts"
+      - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-LGV60-A15-NTSYNC
-          path: |
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtb
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtbo.img
-          if-no-files-found: warn
+          name: Kernel-V60-Final
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/
           

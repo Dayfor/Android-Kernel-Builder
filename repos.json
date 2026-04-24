@@ -1,16 +1,17 @@
+
 [
   {
     "kernelSource": {
       "name": "lgv60-nextgen",
       "repo": "https://github.com/rofikkerneldev/lgv60nextgen_rofikkernel",
-      "branch": "main",
+      "branch": "11",
       "device": "lito-perf"
     },
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://gitlab.com/LeCmnGend/clang-standalone",
-        "branch": "main"
+        "repo": "https://github.com/ZyCromerZ/Clang",
+        "branch": "14"
       },
       {
         "name": "gcc-64",

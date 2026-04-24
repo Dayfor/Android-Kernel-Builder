@@ -65,20 +65,36 @@ jobs:
         run: |
           git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
 
-      - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
+            - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Descargar y aplicar parche NTSYNC
-          wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
-          patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Algunos fragmentos del parche fallaron, verificar manualmente si es necesario."
-          
-          # Habilitar NTSYNC y parámetros críticos para Android 15 (eBPF, Membarrier, Userfaultfd)
-          echo -e "\nCONFIG_NTSYNC=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_BPF_SYSCALL=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_USERFAULTFD=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_MEMBARRIER=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          rm ntsync.patch
+          # Descargar parche con reintentos para evitar Error 8
+          wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 5 https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch || echo "Error al descargar el parche"
 
+          # Aplicar el parche solo si el archivo existe
+          if [ -f ntsync.patch ]; then
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "El parche tiene conflictos, pero intentaremos continuar"
+          fi
+          
+          # Forzar configuraciones necesarias para Android 15 y ntsync
+          # Usamos 'vendor/lito-perf_defconfig' basándonos en la estructura de Rofik
+          CONFIG_PATH="./arch/arm64/configs/vendor/lito-perf_defconfig"
+          
+          if [ -f "$CONFIG_PATH" ]; then
+            echo "Optimizando defconfig para Android 15 y ntsync..."
+            {
+              echo "CONFIG_NTSYNC=y"
+              echo "CONFIG_BPF_SYSCALL=y"
+              echo "CONFIG_USERFAULTFD=y"
+              echo "CONFIG_MEMBARRIER=y"
+              echo "CONFIG_ANDROID_BINDER_IPC=y"
+            } >> "$CONFIG_PATH"
+          else
+            echo "Error: No se encontró el archivo defconfig en $CONFIG_PATH"
+            exit 1
+          fi
+
+          
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
         env:

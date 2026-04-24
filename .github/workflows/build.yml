@@ -57,9 +57,12 @@ jobs:
           sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
           cd .. && rm -rf Python-2.7.18*
 
-      - name: "🌟 Clone kernel source"
+            - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
-        run: git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
+        run: |
+          # Intentar clonar la rama especificada, si falla, clonar la rama por defecto
+          git clone --recursive --branch ${{ env.kernelBranch }} ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1 || \
+          git clone --recursive ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1
 
       - name: "💉 Aplicar Parche NTSYNC"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}

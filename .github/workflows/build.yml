@@ -65,7 +65,7 @@ jobs:
         run: |
           git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
 
-            - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
+      - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           # Descargar parche con reintentos para evitar Error 8

@@ -1,31 +1,35 @@
-[  {
+[
+  {
     "kernelSource": {
-      "name": "mainline-kernel",
-      "repo": "https://gitlab.com/msm8998-mainline/linux",
-      "branch": "mainline/6.1",
-      "device": "msm8998"
+      "name": "lgv60-nextgen",
+      "repo": "https://github.com/rofikkerneldev/lgv60nextgen_rofikkernel",
+      "branch": "main",
+      "device": "lito-perf"
     },
-    "withKernelSU": true,
     "toolchains": [
       {
-        "repo": "https://android.googlesource.com/platform/prebuilts/gas/linux-x86",
-        "branch": "master",
-        "name": "gas"
+        "name": "clang",
+        "repo": "https://gitlab.com/LeCmnGend/clang-standalone",
+        "branch": "main"
       },
       {
-        "repo": "https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone/",
-        "branch": "11",
-        "name": "clang"
+        "name": "gcc-64",
+        "repo": "https://github.com/mvaisakh/gcc-arm64",
+        "branch": "gcc-master"
+      },
+      {
+        "name": "gcc-32",
+        "repo": "https://github.com/mvaisakh/gcc-arm",
+        "branch": "gcc-master"
       }
     ],
     "params": {
       "ARCH": "arm64",
-      "CROSS_COMPILE": "aarch64-linux-gnu-",
-      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
-      "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
+      "CC": "clang",
       "CLANG_TRIPLE": "aarch64-linux-gnu-",
-      "AR": "",
-      "CC": "clang"
-    }
+      "CROSS_COMPILE": "aarch64-elf-",
+      "CROSS_COMPILE_ARM32": "arm-eabi-"
+    },
+    "withKernelSU": "true"
   }
 ]

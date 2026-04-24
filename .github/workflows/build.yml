@@ -49,7 +49,7 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools libdebuginfod-dev
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-unicode=ucs4 --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -60,7 +60,6 @@ jobs:
       - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
         run: |
-          # Intentar clonar la rama especificada, si falla, clonar la rama por defecto
           git clone --recursive --branch ${{ env.kernelBranch }} ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1 || \
           git clone --recursive ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1
 
@@ -69,7 +68,7 @@ jobs:
         run: |
           wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch || curl -Lo ntsync.patch https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
           if [ -f ntsync.patch ]; then
-            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Conflicto en parche, continuando."
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Parche parcial."
           fi
           
           REAL_CONFIG=$(find arch/arm64/configs/ -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
@@ -99,23 +98,16 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          # Extraemos los valores del JSON
           ARCH=$(echo $params | jq -r ".ARCH")
-          CROSS=$(echo $params | jq -r ".CROSS_COMPILE")
-          CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")
-          CC_NAME=$(echo $params | jq -r ".CC")
-          
           echo "ARCH=$ARCH" >> $GITHUB_ENV
           mkdir -p $(pwd)/${{ env.OUT_DIR }}
           
-          # Construimos los argumentos forzando la arquitectura
-          # Esto evita el error de '-mlittle-endian' al asegurar que no use el GCC de x86
-          BUILD_ARGS="ARCH=$ARCH CROSS_COMPILE=$CROSS O=$(pwd)/${{ env.OUT_DIR }}"
-          if [ "$CC_NAME" = "clang" ]; then
-             BUILD_ARGS="$BUILD_ARGS CC=clang CLANG_TRIPLE=$CLANG_TRIPLE"
+          # Usamos variables explicitas para evitar que use el compilador del sistema
+          BUILD_ARGS="ARCH=$ARCH CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE") CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_ARM32") O=$(pwd)/${{ env.OUT_DIR }}"
+          if [ "$(echo $params | jq -r ".CC")" = "clang" ]; then
+             BUILD_ARGS="$BUILD_ARGS CC=clang CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")"
           fi
-          
-          echo "args=-j$(nproc --all) $BUILD_ARGS" >> $GITHUB_OUTPUT
+          echo "args=-j3 $BUILD_ARGS" >> $GITHUB_OUTPUT
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -129,12 +121,13 @@ jobs:
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Compilar con los argumentos generados
-          make ${{ steps.generate-args.outputs.args }}
+          # Intentamos compilar. Si falla por la librería de debug, la forzamos
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu/
+          make ${{ steps.generate-args.outputs.args }} || make -j1 ${{ steps.generate-args.outputs.args }}
 
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-V60-Final
+          name: Kernel-LGV60-Final-A15
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/
           

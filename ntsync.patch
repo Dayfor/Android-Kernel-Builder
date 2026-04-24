@@ -1,0 +1,10 @@
+#!/bin/bash
+# Descargar y aplicar parches de ntsync
+wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
+patch -p1 < ntsync.patch
+
+# Asegurar compatibilidad con Android 15 (eBPF y Membarrier)
+sed -i 's/# CONFIG_BPF_SYSCALL is not set/CONFIG_BPF_SYSCALL=y/' arch/arm64/configs/vendor/lito-perf_defconfig
+echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/vendor/lito-perf_defconfig
+echo "CONFIG_USERFAULTFD=y" >> arch/arm64/configs/vendor/lito-perf_defconfig
+

@@ -102,12 +102,12 @@ jobs:
           echo "ARCH=$ARCH" >> $GITHUB_ENV
           mkdir -p $(pwd)/${{ env.OUT_DIR }}
           
-          # Usamos variables explicitas para evitar que use el compilador del sistema
+          # Forzamos el uso de LLVM para evitar dependencias corruptas de GCC
           BUILD_ARGS="ARCH=$ARCH CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE") CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_ARM32") O=$(pwd)/${{ env.OUT_DIR }}"
-          if [ "$(echo $params | jq -r ".CC")" = "clang" ]; then
-             BUILD_ARGS="$BUILD_ARGS CC=clang CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")"
-          fi
-          echo "args=-j3 $BUILD_ARGS" >> $GITHUB_OUTPUT
+          BUILD_ARGS="$BUILD_ARGS CC=clang CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")"
+          BUILD_ARGS="$BUILD_ARGS NM=$(echo $params | jq -r ".NM") OBJCOPY=$(echo $params | jq -r ".OBJCOPY") OBJDUMP=$(echo $params | jq -r ".OBJDUMP") STRIP=$(echo $params | jq -r ".STRIP")"
+          
+          echo "args=-j2 $BUILD_ARGS" >> $GITHUB_OUTPUT
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -121,13 +121,12 @@ jobs:
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Intentamos compilar. Si falla por la librería de debug, la forzamos
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu/
-          make ${{ steps.generate-args.outputs.args }} || make -j1 ${{ steps.generate-args.outputs.args }}
+          # Compilar con 2 hilos para máxima estabilidad de RAM
+          make ${{ steps.generate-args.outputs.args }}
 
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-LGV60-Final-A15
+          name: Kernel-LGV60-NTSYNC
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/
           

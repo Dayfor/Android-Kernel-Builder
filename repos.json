@@ -3,7 +3,7 @@
     "kernelSource": {
       "name": "lge-sm8250",
       "repo": "https://github.com/LineageOS/android_kernel_lge_sm8250",
-      "branch": "lineage-21",
+      "branch": "lineage-20",
       "device": "v60"
     },
     "toolchains": [

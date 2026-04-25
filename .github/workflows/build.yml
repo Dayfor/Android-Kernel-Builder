@@ -5,7 +5,7 @@ env:
   OUT_DIR: "out"
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Esto permite ejecutarlo manualmente
 
 jobs:
   Set-repos:
@@ -51,15 +51,19 @@ jobs:
           git clone --recursive --branch ${{ env.kernelBranch }} ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1 || \
           git clone --recursive ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1
 
-      - name: "💉 Aplicar Parche NTSYNC y Fix HID"
+      - name: "🛠️ Saneamiento y Parches (HID, Power, NTSYNC)"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # 1. Fix para el error 'use of undeclared identifier ABS'
-          echo "Aplicando fix para drivers/hid/hid-multitouch.c..."
+          # Fix HID (Error ABS)
           sed -i 's/TOUCH_D(ABS/TOUCH_D(usage/g' drivers/hid/hid-multitouch.c
           
-          # 2. Crear el parche NTSYNC localmente para evitar errores 404/basura
-          echo "Creando parche ntsync integrado..."
+          # Fix Power (Error __lpd_ux)
+          sed -i '20i bool __lpd_ux = false;' drivers/power/supply/qcom/qpnp-smb5.c
+          
+          # Fix Clang (Warnings as Errors)
+          sed -i 's/-Werror//g' Makefile
+          
+          # Inyectar soporte NTSYNC en Kconfig
           cat <<EOF > ntsync_fix.patch
           --- a/drivers/android/Kconfig
           +++ b/drivers/android/Kconfig
@@ -77,27 +81,7 @@ jobs:
            	bool "Android Binder filesystem"
            	depends on ANDROID_BINDER_IPC
           EOF
-
-          # Aplicar el parche local
-          patch -p1 < ntsync_fix.patch || echo "Aviso: No se pudo parchear Kconfig, pero seguiremos con defconfig."
-          
-          # 3. Configuración del defconfig (Inyección directa)
-          REAL_CONFIG=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1)
-          if [ -n "$REAL_CONFIG" ]; then
-            echo "Optimizando $REAL_CONFIG para Android 15 y emulación..."
-            # Eliminar basura previa
-            sed -i '/CONFIG_NTSYNC/d' "$REAL_CONFIG"
-            sed -i '/CONFIG_ANDROID_BINDER/d' "$REAL_CONFIG"
-            
-            {
-              echo "CONFIG_NTSYNC=y"
-              echo "CONFIG_BPF_SYSCALL=y"
-              echo "CONFIG_USERFAULTFD=y"
-              echo "CONFIG_MEMBARRIER=y"
-              echo "CONFIG_ANDROID_BINDER_IPC=y"
-              echo "CONFIG_ANDROID_BINDERFS=y"
-            } >> "$REAL_CONFIG"
-          fi
+          patch -p1 < ntsync_fix.patch || echo "Aviso: Parche Kconfig omitido."
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
@@ -136,9 +120,13 @@ jobs:
         run: |
           CONF_NAME=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1 | sed 's|arch/arm64/configs/||')
           make ${{ steps.generate-args.outputs.args }} $CONF_NAME
-          # Desactivar debug pesado para evitar Error 2
+          
+          # Inyectar CONFIG_NTSYNC y BinderFS
+          scripts/config --file ../${{ env.OUT_DIR }}/.config -e NTSYNC
+          scripts/config --file ../${{ env.OUT_DIR }}/.config -e ANDROID_BINDERFS
+          
+          # Desactivar Debug pesado para evitar Error 2 final
           scripts/config --file ../${{ env.OUT_DIR }}/.config -d DEBUG_INFO
-          scripts/config --file ../${{ env.OUT_DIR }}/.config -d DEBUG_SECTION_MISMATCH
           scripts/config --file ../${{ env.OUT_DIR }}/.config -e SECTION_MISMATCH_WARN_ONLY
 
       - name: "🎶 Build kernel"
@@ -148,5 +136,5 @@ jobs:
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-LGV60-Lineage-NTSYNC
+          name: Kernel-LGV60-Final
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*

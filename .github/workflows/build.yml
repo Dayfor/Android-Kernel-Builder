@@ -95,15 +95,7 @@ jobs:
             printf 'config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\tdefault y\n\thelp\n\t  Soporte para Proton/Wine.\n' > ntsync_config
             sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
           fi
-
-      - name: "🔧 Fix Sintaxis Makefile (Python)"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          MAKEFILE_PATH=$(find . -name "Makefile" | grep "drivers/android/Makefile")
-          if [ -f "$MAKEFILE_PATH" ]; then
-            python3 -c "import sys; p='$MAKEFILE_PATH'; l=open(p).readlines(); open(p,'w').write(''.join(['\t'+x.lstrip() if x.strip().startswith('obj-') else x for x in l]))"
-          fi
-
+          
       - name: "😎 Configurar Argumentos"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"

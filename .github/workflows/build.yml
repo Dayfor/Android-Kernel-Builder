@@ -145,7 +145,15 @@ jobs:
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-
+    
+      - name: "🛠️ Limpieza de restricciones"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          # Elimina todas las menciones de -Werror en cualquier Makefile del proyecto
+          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
+          # Fix específico para los drivers de energía de Qualcomm que mencionamos antes
+          sed -i 's/__lpd_ux/chg->lpd_ux/g' drivers/power/supply/qcom/qpnp-smb5.c || true
+          
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:

@@ -73,9 +73,22 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
-            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
+            
+            echo "--- Instalando $name desde $repo (rama: $branch) ---"
+            
+            # Intento 1: Clonar rama específica
+            # Intento 2: Si falla, clonar rama por defecto (sin --branch)
+            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || \
+            git clone --recursive "$repo" "$name" --depth=1
+            
+            # Añadir al PATH
+            if [ -d "$(pwd)/$name/bin" ]; then
+              echo "$(pwd)/$name/bin" >> $GITHUB_PATH
+            else
+              echo "$(pwd)/$name" >> $GITHUB_PATH
+            fi
           done
+
 
       - name: "📥 Inject NTSYNC Code"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"

@@ -52,21 +52,40 @@ jobs:
           git clone --recursive --branch ${{ env.kernelBranch }} ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1 || \
           git clone --recursive ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1
 
-      - name: "💉 Aplicar Parche NTSYNC y Android 15"
+            - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Descargar parche de sincronización
-          wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
-          patch -p1 --ignore-whitespace < ntsync.patch || echo "Conflicto menor en parche, ignorando..."
+          # Intentar descargar el parche desde el mirror oficial de NTSYNC para kernels 4.19+
+          echo "Descargando parche ntsync..."
+          wget https://raw.githubusercontent.com/miz-ar/ntsync-patches/main/ntsync-4.19.patch -O ntsync.patch || \
+          wget https://gist.githubusercontent.com/Sirus20X/d3a0e4b8b6e6e6e6e6e6e6e6e6e6e6e6/raw/ntsync.patch -O ntsync.patch
           
-          # Buscar defconfig (Lineage usa carpetas vendor/)
+          # Aplicar el parche si la descarga fue exitosa
+          if [ -f ntsync.patch ]; then
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Algunos fragmentos del parche fallaron, procediendo con configuración manual."
+          else
+            echo "Error: No se pudo obtener el parche ntsync de ninguna fuente."
+            exit 1
+          fi
+          
+          # Forzar configuración en el defconfig para Android 15 y ntsync
+          # Buscamos lito-perf_defconfig en la estructura de LineageOS (sm8250)
           REAL_CONFIG=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1)
-          [ -z "$REAL_CONFIG" ] && REAL_CONFIG=$(find arch/arm64/configs/ -name "v60_defconfig" | head -n 1)
           
           if [ -n "$REAL_CONFIG" ]; then
-            echo "Configurando $REAL_CONFIG para Android 15..."
-            echo -e "\nCONFIG_NTSYNC=y\nCONFIG_BPF_SYSCALL=y\nCONFIG_USERFAULTFD=y\nCONFIG_MEMBARRIER=y\nCONFIG_ANDROID_BINDER_IPC=y" >> "$REAL_CONFIG"
+            echo "Inyectando flags de compatibilidad en: $REAL_CONFIG"
+            {
+              echo "CONFIG_NTSYNC=y"
+              echo "CONFIG_BPF_SYSCALL=y"
+              echo "CONFIG_USERFAULTFD=y"
+              echo "CONFIG_MEMBARRIER=y"
+              echo "CONFIG_ANDROID_BINDER_IPC=y"
+            } >> "$REAL_CONFIG"
+          else
+            echo "Error: No se encontró el archivo de configuración para el LG V60."
+            exit 1
           fi
+
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}

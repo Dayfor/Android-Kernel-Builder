@@ -113,7 +113,7 @@ jobs:
           find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
     
       - name: "Fix Makefile Separator" 
-       run: |
+        run: |
           # Esto reemplaza espacios al inicio de la línea por un tabulador real
             sed -i 's/^    /\t/' kernel_lge_sm8250_vendor/timelm/kernel_lge_sm8250/drivers/android/Makefile
     
@@ -137,11 +137,17 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         if: ${{ env.withKernelSU == 'true' }}
         run: |
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+      
+      - name: "Fix Makefile Syntax"
+        run: |
+         # Elimina espacios en blanco accidentales al inicio de las líneas y coloca Tabuladores
+           sed -i 's/^[ ]*obj-/obj-/' kernel_lge_sm8250_vendor/timelm/kernel_lge_sm8250/drivers/android/Makefile
+           sed -i 's/^obj-/\tobj-/' kernel_lge_sm8250_vendor/timelm/kernel_lge_sm8250/drivers/android/Makefile
 
-      - name: "👍 Make defconfig"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+         # Asegura que no haya líneas vacías mal formadas al principio
+           sed -i '/^$/d' kernel_lge_sm8250_vendor/timelm/kernel_lge_sm8250/drivers
+    
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}

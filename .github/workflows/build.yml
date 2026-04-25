@@ -45,7 +45,7 @@ jobs:
       
     steps:
       - name: "✨ Crear directorio de trabajo"
-        run: mkdir -p "$kernelDir"
+        run: mkdir -p "${{ env.kernelDir }}"
 
       - name: "⭐ Instalar prerrequisitos"
         run: |
@@ -64,7 +64,7 @@ jobs:
       - name: "🌟 Clonar código fuente"
         working-directory: ./${{ env.kernelDir }}
         run: |
-          git clone --recursive --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
+          git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
       - name: "💫 Descargar Toolchains"
         working-directory: ./${{ env.kernelDir }}
@@ -80,9 +80,10 @@ jobs:
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
-      - name: "🛠️ Parches NTSYNC y Fixes"
+      - name: "🛠️ Parches NTSYNC, Energía y Android 16"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
+          # 1. Soporte NTSYNC y Fix Energía
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
@@ -96,22 +97,35 @@ jobs:
             fi
           fi
 
+          # 2. Configuración Defconfig (NTSYNC + Requisitos Android 16 BPF)
           CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           if [ -f "$CONF_PATH" ]; then
             sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
-            echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
+            {
+              echo "CONFIG_NTSYNC=y"
+              echo "CONFIG_BPF=y"
+              echo "CONFIG_BPF_SYSCALL=y"
+              echo "CONFIG_NET_CLS_BPF=y"
+              echo "CONFIG_NET_ACT_BPF=y"
+              echo "CONFIG_BPF_JIT=y"
+              echo "CONFIG_HAVE_EBPF_JIT=y"
+            } >> "$CONF_PATH"
+            sed -i 's/CONFIG_RT_GROUP_SCHED=y/CONFIG_RT_GROUP_SCHED=n/g' "$CONF_PATH"
           fi
 
+          # 3. Fix Cgroups para booteo en Android 16
+          sed -i 's/propagate_mnt/do_mount/g' fs/pnode.c 2>/dev/null || echo "Skip pnode fix"
+
+          # 4. Limpieza de -Werror
           find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
 
-      - name: "🔧 Fix Sintaxis Makefile (LG V60)"
+      - name: "🔧 Fix Sintaxis Makefile (Python Tab Fix)"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           MAKEFILE_PATH=$(find . -name "Makefile" | grep "drivers/android/Makefile")
           if [ -f "$MAKEFILE_PATH" ]; then
-            sed -i 's/^[[:space:]]*//' "$MAKEFILE_PATH"
-            sed -i 's/^obj-/\tobj-/' "$MAKEFILE_PATH"
-            echo "✅ Makefile corregido en $MAKEFILE_PATH"
+            python3 -c "import sys; path = '$MAKEFILE_PATH'; lines = open(path).readlines(); open(path, 'w').write(''.join(['\t' + l.lstrip() if l.strip().startswith('obj-') else l for l in lines]))"
+            echo "✅ Tabulador real insertado en $MAKEFILE_PATH"
           fi
 
       - name: "😎 Configurar Argumentos"
@@ -123,7 +137,7 @@ jobs:
           ARCH=$(echo "$params" | jq -r ".ARCH")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
           args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
@@ -133,20 +147,18 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         if: ${{ env.withKernelSU == 'true' }}
         run: |       
-         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
      
       - name: "🎶 Generar configuración (defconfig)"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Primero generamos el .config basado en el archivo del dispositivo
           make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
       - name: "🎶 Compilar Kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Ahora que existe el .config, procedemos a la compilación real
           make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
-          
+
       - name: "📤 Subir Artefactos"
         uses: actions/upload-artifact@v4
         with:

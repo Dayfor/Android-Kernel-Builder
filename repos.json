@@ -1,31 +1,41 @@
-[  {
+[
+  {
     "kernelSource": {
-      "name": "mainline-kernel",
-      "repo": "https://gitlab.com/msm8998-mainline/linux",
-      "branch": "mainline/6.1",
-      "device": "msm8998"
+      "name": "kernel_lge_sm8250",
+      "repo": "https://github.com/Dayfor/kernel_lge_sm8250",
+      "branch": "lineage-21.0",
+      "device": "vendor/timelm"
     },
-    "withKernelSU": true,
     "toolchains": [
       {
-        "repo": "https://android.googlesource.com/platform/prebuilts/gas/linux-x86",
-        "branch": "master",
-        "name": "gas"
+        "name": "clang-aosp",
+        "repo": "https://github.com/vherivhel/google-clang",
+        "branch": "13.0"
       },
       {
-        "repo": "https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone/",
-        "branch": "11",
-        "name": "clang"
+        "name": "aarch64-gcc",
+        "repo": "https://github.com/mvaisakh/gcc-arm64",
+        "branch": "gcc-master"
+      },
+      {
+        "name": "arm32-gcc",
+        "repo": "https://github.com/mvaisakh/gcc-arm",
+        "branch": "gcc-master"
       }
     ],
     "params": {
       "ARCH": "arm64",
+      "CC": "clang",
+      "NM": "llvm-nm",
+      "OBJCOPY": "llvm-objcopy",
+      "OBJDUMP": "llvm-objdump",
+      "STRIP": "llvm-strip",
       "CROSS_COMPILE": "aarch64-linux-gnu-",
       "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
-      "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
       "CLANG_TRIPLE": "aarch64-linux-gnu-",
-      "AR": "",
-      "CC": "clang"
-    }
+      "LLVM": "1",
+      "LLVM_IAS": "1"
+    },
+    "withKernelSU": "false"
   }
 ]

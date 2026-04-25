@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  Set-repos:
+  Set-repos: 
     name: "🐂 Parse repos.json"
     runs-on: ubuntu-latest
     outputs:
@@ -23,6 +23,7 @@ jobs:
           echo "repos<<EOF" >> $GITHUB_OUTPUT
           cat ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
   Build-Kernel:
     name: "🐎 Build kernel"
     runs-on: ubuntu-latest
@@ -56,6 +57,7 @@ jobs:
           make -j$(nproc) && sudo make altinstall
           sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
           cd .. && rm -rf Python-2.7.18*
+
       - name: "🌟 Clone kernel source"
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
@@ -73,46 +75,51 @@ jobs:
             git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1
             [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
+
       - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          # Crucial: Forzar ARCH=arm64 para evitar que busque en x86
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }}"
+          # Definimos KCFLAGS aquí para que se usen en todos los pasos de make
+          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-error=implicit-function-declaration\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
+
       - name: "📥 Inject NTSYNC Source"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           mkdir -p include/uapi/linux
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
-      - name: "🛠️ Fix & Patch (NTSYNC + LG V60 + Clang Flags)"
+
+      - name: "🛠️ Fix & Patch (NTSYNC + LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          git checkout drivers/misc/Makefile drivers/misc/Kconfig drivers/android/Makefile scripts/Makefile.extrawarn
-          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Wno-error\s*=\s*/-Wno-error=/g' {} +
-          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-implicit-function-declaration//g' {} +
-          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Wno-error=return-type//g' {} +
-          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Werror//g' {} +
+          # 1. Limpiar cualquier error previo en el Makefile restaurándolo
+          git checkout Makefile drivers/misc/Makefile drivers/misc/Kconfig
+          
+          # 2. Parches lógicos (solo texto, sin añadir líneas complejas al Makefile)
           if ! grep -q "ntsync.o" drivers/misc/Makefile; then printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile; fi
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
             printf "config NTSYNC\n\ttristate \"NTSYNC Support\"\n\tdefault y\n" > ntsync_config
             sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
             rm ntsync_config
           fi
+          
+          # 3. Arreglo para sensores LG V60
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
           fi
+
       - name: "😋 Update KernelSU"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         if: ${{ env.withKernelSU == 'true' }}
@@ -121,18 +128,21 @@ jobs:
           CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           sed -i '/CONFIG_KPROBES/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
-      - name: "👍 Make defconfig"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
-      - name: "🎶 Build kernel"
+      - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
+          # Paso 1: Generar config
+          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+          
+          # Paso 2: Compilar el kernel
+          # Usamos los args generados que ya incluyen KCFLAGS de seguridad
+          make ${{ steps.generate-args.outputs.args }}
+
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-${{ env.kernelDevice }}-${{ env.kernelName }}-${{ github.run_number }}"
+          name: "Kernel-${{ env.kernelDevice }}-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtb*

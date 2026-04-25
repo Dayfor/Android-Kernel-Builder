@@ -125,4 +125,40 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH")
-          echo "ARCH=$ARCH"
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
+            val=$(echo "$params" | jq -r ".$key")
+            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
+          done
+          echo "args=$args" >> $GITHUB_OUTPUT
+
+      - name: "😋 Update KernelSU"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        if: ${{ env.withKernelSU == 'true' }}
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          sed -i '/CONFIG_KPROBES/d' "$CONF"
+          echo "CONFIG_KPROBES=y" >> "$CONF"
+          echo "CONFIG_HAVE_KPROBES=y" >> "$CONF"
+          echo "CONFIG_KPROBE_EVENTS=y" >> "$CONF"
+
+      - name: "👍 Make defconfig"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+
+      - name: "🎶 Build kernel"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: |
+          # Use KCFLAGS to bypass legacy syntax errors with modern Clang
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
+
+      - name: "📤 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Kernel-${{ env.kernelDevice }}-${{ env.kernelName }}-${{ github.run_number }}"
+          path: |
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtb*
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

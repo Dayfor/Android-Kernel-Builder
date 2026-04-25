@@ -104,9 +104,9 @@ jobs:
           # 3. Habilitar NTSYNC en el defconfig del dispositivo
           CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           if [ -f "$CONF_PATH" ]; then
-            sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
-            echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
-            echo "✅ CONFIG_NTSYNC=y forzado en $CONF_PATH"
+             sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
+             echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
+             echo "✅ CONFIG_NTSYNC=y forzado en $CONF_PATH"
           fi
 
           # 4. Limpieza masiva de -Werror para evitar Error 2
@@ -117,19 +117,19 @@ jobs:
           # Definimos la ruta exacta al archivo     
           MAKEFILE_PATH="kernel_lge_sm8250_vendor/timelm/kernel_lge_sm8250/drivers/android/Makefile"
           if [ -f "$MAKEFILE_PATH" ]; then
-            echo "Corrigiendo separadores en $MAKEFILE_PATH..."
+             echo "Corrigiendo separadores en $MAKEFILE_PATH..."
             
           # 1. Eliminar cualquier espacio en blanco al inicio de las líneas
-            sed -i 's/^[[:space:]]*//' "$MAKEFILE_PATH"
+             sed -i 's/^[[:space:]]*//' "$MAKEFILE_PATH"
           
           # 2. Insertar un Tabulador real al inicio de las líneas que empiezan con obj-
-            sed -i 's/^obj-/\tobj-/' "$MAKEFILE_PATH"
+             sed -i 's/^obj-/\tobj-/' "$MAKEFILE_PATH"
            
           # 3. Verificación visual en el log (opcional)
-            head -n 5 "$MAKEFILE_PATH"
-            else
-            echo "ERROR: No se encontró el archivo en $MAKEFILE_PATH"
-            exit 1
+             head -n 5 "$MAKEFILE_PATH"
+             else
+             echo "ERROR: No se encontró el archivo en $MAKEFILE_PATH"
+             exit 1
           fi
           
       - name: "😎 Set args"

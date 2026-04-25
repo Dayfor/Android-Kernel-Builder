@@ -1,4 +1,4 @@
-name: "Kernel Build: NTSYNC Edition A15"
+name: "Build kernels"
 
 env:
   CONFIGURATION: "repos.json"
@@ -9,7 +9,7 @@ on:
 
 jobs:
   Set-repos:
-    name: "🐂 Parsear repos.json"
+    name: "🐂 Parse repos.json"
     runs-on: ubuntu-latest
     outputs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
@@ -17,7 +17,7 @@ jobs:
       - name: "😄 Checkout"
         uses: actions/checkout@v3
 
-      - name: "😆 Generar Matriz"
+      - name: "😆 Generate Matrix"
         id: generate-matrix
         run: |
           echo "repos<<EOF" >> $GITHUB_OUTPUT
@@ -25,7 +25,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
-    name: "🐎 Compilar Kernel"
+    name: "🐎 Build kernel"
     runs-on: ubuntu-latest
     needs:
       - Set-repos
@@ -44,13 +44,14 @@ jobs:
       withKernelSU: "${{ matrix.repos.withKernelSU }}"
       
     steps:
-      - name: "✨ Preparar entorno"
+      - name: "✨ Create working dir"
         run: mkdir -p "${{ env.kernelDir }}"
 
-      - name: "⭐ Instalar dependencias"
+      - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch libarchive-tools
+          # Instalación de Python 2.7 para scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -58,11 +59,11 @@ jobs:
           sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
           cd .. && rm -rf Python-2.7.18*
 
-      - name: "🌟 Clonar Kernel"
+      - name: "🌟 Clone kernel source"
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Descargar Toolchains"
+      - name: "💫 Get toolchains"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -72,50 +73,43 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1
+            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
-      - name: "📥 Inyectar código NTSYNC"
+      - name: "📥 Inject NTSYNC Code"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           mkdir -p include/uapi/linux
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
-            
-      - name: "🛠️ Parches Android 15 + NTSYNC"
+
+      - name: "🛠️ Fixes & Patches (NTSYNC + LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Limpiar archivos originales
-          git checkout drivers/android/Makefile drivers/misc/Makefile drivers/misc/Kconfig
-
-          # 2. Registrar NTSYNC en Makefile con Tabulador real
+          # 1. Registrar NTSYNC en Makefile/Kconfig de forma segura
+          git checkout drivers/misc/Makefile drivers/misc/Kconfig
           if ! grep -q "ntsync.o" drivers/misc/Makefile; then
             printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
           fi
-          
-          # 3. Inyectar Kconfig
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
-            echo "config NTSYNC" > ntsync_entry
-            echo -e "\ttristate \"Windows-compatible synchronization primitives\"" >> ntsync_entry
-            echo -e "\tdefault y" >> ntsync_entry
-            echo -e "\thelp" >> ntsync_entry
-            echo -e "\t  Soporte para Proton y Windows Sync (NTSYNC)." >> ntsync_entry
-            sed -i '/menu "Misc devices"/r ntsync_entry' drivers/misc/Kconfig
-            rm ntsync_entry
+            printf "config NTSYNC\n\ttristate \"NTSYNC Support\"\n\tdefault y\n" > ntsync_config
+            sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
           fi
 
-          # 4. Fix Energía SMB5 (LG V60)
+          # 2. Fix SMB5 (LG V60 Charging)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
           fi
 
-          # 5. Global: Desactivar -Werror
+          # 3. ELIMINAR ERRORES DE CLANG (Lógica de espacios en flags)
+          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Wno-error =/-Wno-error=/g'
+          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Wno-error /-Wno-error=/g'
           find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
 
-      - name: "😎 Configurar Argumentos"
+      - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
         env:
@@ -130,22 +124,32 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "😋 Integrar KernelSU"
+      - name: "😋 Update KernelSU"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         if: ${{ env.withKernelSU == 'true' }}
-        run: curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-     
-      - name: "🎶 Generar defconfig"
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          sed -i '/CONFIG_KPROBES/d' $CONF
+          echo "CONFIG_KPROBES=y" >> $CONF
+          echo "CONFIG_HAVE_KPROBES=y" >> $CONF
+          echo "CONFIG_KPROBE_EVENTS=y" >> $CONF
+
+      - name: "👍 Make defconfig"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
-      - name: "🎶 Compilar Kernel"
+      - name: "🎶 Build kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Limpiamos CFLAGS que puedan venir corruptas del entorno
-          export KCFLAGS="-Wno-everything"
-          export KBUILD_CFLAGS_KERNEL="-Wno-everything"
-          export KBUILD_CFLAGS="-Wno-everything"
-          
-          # Ejecutamos make protegiendo los argumentos con comillas
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="$KCFLAGS"
+          # Forzamos flags para que Clang ignore advertencias mal formadas
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
+
+      - name: "📤 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Kernel-${{ env.kernelDevice }}-${{ env.kernelName }}"
+          path: |
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtb*
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

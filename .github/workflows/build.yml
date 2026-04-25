@@ -133,10 +133,13 @@ jobs:
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
              make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option"
 
-      - name: "🎶 Build kernel"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+      - name: Configurar y Compilar
         run: |
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
+         # 1. Generar la configuración (.config)
+             make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 vendor/timelm_defconfig
+
+         # 2. Compilar el kernel con los flags de corrección
+             make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option"
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4

@@ -134,7 +134,18 @@ jobs:
         if: ${{ env.withKernelSU == 'true' }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+       - name: "🎶 Generar configuración (defconfig)"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          # Primero generamos el .config basado en el archivo del dispositivo
+          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
+      - name: "🎶 Compilar Kernel"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          # Ahora que existe el .config, procedemos a la compilación real
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
+          
       - name: "🎶 Compilar Kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |

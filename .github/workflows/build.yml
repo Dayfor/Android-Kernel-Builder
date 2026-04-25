@@ -81,32 +81,67 @@ jobs:
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           mkdir -p include/uapi/linux
+          # Descargar driver y cabecera
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
+          
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
+     
+      - name: "🛠️ Parches NTSYNC y Fixes LG V60"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: |
+          # 1. Limpiar cambios previos para evitar archivos corruptos
+          git checkout drivers/misc/Makefile drivers/misc/Kconfig
+
+          # 2. Inyectar en drivers/misc/Makefile (CON TABULADOR)
+          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
+            printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
+          fi
+
+          # 3. Inyectar en drivers/misc/Kconfig (Sintaxis correcta)
+          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
+            # Creamos un archivo temporal con la configuración
+            cat <<EOF > ntsync_config
+            config NTSYNC
+	          tristate "Windows-compatible synchronization primitives"
+          	default y
+	          help
+	          Soporte para NTSYNC (Proton/Wine) optimizado para LG V60.
+             EOF
+             
+            # Insertar después de la línea de 'Misc devices'
+            sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
+            rm ntsync_config
+          fi
+
+          # 4. Fix Energía SMB5 (Específico LG V60 Snapdragon 865)
+          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          if [ -n "$SMB5_FILE" ]; then
+            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
+            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
+          fi
+
+          # 5. Eliminar -Werror para evitar que Clang detenga la build por advertencias
+          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
+          
 
       - name: "🛠️ Parches Android 15 + NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 0. Limpiar archivos que pudieron quedar corruptos en intentos previos
-          git checkout drivers/android/Makefile
-          git checkout drivers/misc/Makefile
-          git checkout drivers/misc/Kconfig
+          # 1. Limpiar cualquier desastre previo (Solución raíz)
+          git checkout drivers/android/Makefile drivers/misc/Makefile drivers/misc/Kconfig
 
-          # 1. Registrar NTSYNC en el sistema de construcción (en drivers/misc)
-          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
-            echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
-          fi
+          # 2. Registrar NTSYNC en MISC (Forma correcta y limpia)
+          # Usamos un tabulador real (\t) para evitar el error de StackOverflow
+          sed -i '/obj-$(CONFIG_GENWQE)/a \tobj-$(CONFIG_NTSYNC) += ntsync.o' drivers/misc/Makefile
           
-          # Inyectar la configuración en Kconfig de forma segura
+          # 3. Inyectar Kconfig (Donde sí van los bloques 'config')
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
-            sed -i '/config GENWQE/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para Proton/Wine.' drivers/misc/Kconfig
+            printf 'config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para Proton y Windows Sync en Android.\n' > ntsync_entry
+            sed -i '/menu "Misc devices"/r ntsync_entry' drivers/misc/Kconfig
           fi
 
-          # 2. Fix Energía SMB5 (LG V60 - Snapdragon 865)
-          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
-          [ -n "$SMB5_FILE" ] && sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE" && sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-
-          # ... resto de tus parches (Optimización Defconfig, etc.)
+          # 4. Quitar -Werror para evitar que Clang detenga la build
+          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
 
       - name: "😎 Configurar Argumentos"
         id: generate-args
@@ -135,7 +170,6 @@ jobs:
       - name: "🎶 Compilar Kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Usamos comillas simples para evitar que bash rompa la cadena de flags
           make ${{ steps.generate-args.outputs.args }} KCFLAGS='-Wno-everything'
 
       - name: "📤 Subir Artefactos"

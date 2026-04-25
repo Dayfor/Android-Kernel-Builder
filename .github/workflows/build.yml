@@ -1,56 +1,49 @@
-name: "Android 15 + NTSYNC Build"
-
-env:
-  CONFIGURATION: "repos.json"
-  OUT_DIR: "out"
+name: "🚀 Compilador Kernel: Android 15 + NTSYNC"
 
 on:
   workflow_dispatch:
 
+env:
+  kernelName: "kernel_lge_sm8250"
+  kernelDir: "source"
+  OUT_DIR: "out"
+  # Ajusta el DEFCONFIG según el nombre exacto en tu repo (lito-perf_defconfig es el estándar)
+  DEFCONFIG: "vendor/lito-perf_defconfig"
+
 jobs:
-  Build-Kernel:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: "Checkout"
+      - name: "📦 Clonar Repositorio"
         uses: actions/checkout@v4
 
-      - name: "Instalar dependencias"
+      - name: "🛠️ Instalar Dependencias"
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libssl-dev libelf-dev clang llvm lld jq
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld jq patch
 
-      # Aquí iría el paso de clonación de tu script original que lee repos.json
-
-      - name: "🛠️ Inyección de Android 15 y NTSYNC"
-        working-directory: ./source # Ajusta según tu carpeta de kernel
+      - name: "⚙️ Configurar Toolchain (Dayfor Style)"
+        id: generate-args
         run: |
-          # 1. Aplicar fix de variables que hicimos en smb5-lib.h
-          sed -i 's/__lpd_ux/chg->lpd_ux/g' drivers/power/supply/qcom/qpnp-smb5.c || true
+          echo "args=ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          KCFLAGS='-Wno-error' \
+          -j$(nproc --all)" >> $GITHUB_OUTPUT
 
-          # 2. Habilitar soporte NTSYNC para Wine/Proton
-          echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/vendor/lito-perf_defconfig
-          
-          # 3. Habilitar BinderFS y BPF (Requisitos obligatorios Android 15)
-          {
-            echo "CONFIG_ANDROID_BINDERFS=y"
-            echo "CONFIG_BPF_SYSCALL=y"
-            echo "CONFIG_USERFAULTFD=y"
-            echo "CONFIG_MEMBARRIER=y"
-          } >> arch/arm64/configs/vendor/lito-perf_defconfig
-
-          # 4. Desactivar avisos como errores para que no se detenga la compilación
-          sed -i 's/-Werror//g' Makefile
-
-      - name: "🚀 Compilar Kernel"
+      - name: "💉 Aplicar Parches y Adaptación Android 15"
+        working-directory: ./${{ env.kernelDir }}
         run: |
-          make ARCH=arm64 O=../out vendor/lito-perf_defconfig
-          # Limpiar información de depuración para evitar que el kernel sea gigante
-          ../source/scripts/config --file ../out/.config -d DEBUG_INFO
-          make ARCH=arm64 O=../out LLVM=1 LLVM_IAS=1 -j$(nproc --all)
-
-      - name: "📦 Cargar Imagen final"
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel-V60-A15-NTSYNC
-          path: out/arch/arm64/boot/Image.gz-dtb
+          # 1. Parche para registrar NTSYNC en el sistema de configuración
+          cat <<EOF > ntsync
           

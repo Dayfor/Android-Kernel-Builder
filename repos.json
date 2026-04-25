@@ -8,9 +8,9 @@
     },
     "toolchains": [
       {
-        "name": "clang-aosp",
-        "repo": "https://github.com/vherivhel/google-clang",
-        "branch": "13.0"
+        "name": "clang",
+        "repo": "https://github.com/ZyCromerZ/Clang",
+        "branch": "14"
       },
       {
         "name": "aarch64-gcc",

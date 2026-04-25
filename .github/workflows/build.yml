@@ -51,7 +51,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
-          # Instalación de Python 2.7 para compatibilidad de scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz
           cd Python-2.7.18
@@ -69,14 +68,13 @@ jobs:
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
-        env:
-          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
-          toolchains_num=$(echo "$toolchains" | jq 'length')
-          for ((i=0;i<toolchains_num;i++)); do
-            name=$(echo "$toolchains" | jq -r ".[$i].name")
-            repo=$(echo "$toolchains" | jq -r ".[$i].repo")
-            branch=$(echo "$toolchains" | jq -r ".[$i].branch")
+          toolchains='${{ Johny_no_JSON_escaped_issue: toJSON(matrix.repos.toolchains) }}'
+          # Usamos una forma más segura de procesar el JSON en bash
+          echo '${{ toJSON(matrix.repos.toolchains) }}' | jq -c '.[]' | while read i; do
+            name=$(echo $i | jq -r '.name')
+            repo=$(echo $i | jq -r '.repo')
+            branch=$(echo $i | jq -r '.branch')
             git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
@@ -84,40 +82,68 @@ jobs:
       - name: "🛠️ Apply NTSYNC Patches & Fixes"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # 1. Localizar y reparar variables de energía (LPD)
+          # 1. Fix variables de energía
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-            echo "✅ Fix de energía aplicado en $SMB5_FILE"
           fi
 
-          # 2. Inyectar soporte NTSYNC en Kconfig de forma segura
+          # 2. Inyectar NTSYNC (Método seguro con archivo temporal)
           KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
-          if [ -n "$KCONFIG_FILE" ]; then
-            if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
-              sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
-              echo "✅ NTSYNC inyectado en $KCONFIG_FILE"
-            fi
+          if [ -n "$KCONFIG_FILE" ] && ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
+            sed -i '/config ANDROID_BINDERFS/i source "drivers/android/ntsync/Kconfig"' "$KCONFIG_FILE"
+            mkdir -p drivers/android/ntsync
+            echo -e 'config NTSYNC\n\ttristate "NTSYNC support"\n\thelp\n\t  Windows NT sync primitives.' > drivers/android/ntsync/Kconfig
           fi
 
-          # 3. Habilitar NTSYNC en el defconfig del dispositivo
+          # 3. Habilitar en defconfig
           CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           if [ -f "$CONF_PATH" ]; then
             sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
             echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
-            echo "✅ CONFIG_NTSYNC=y forzado en $CONF_PATH"
           fi
 
-          # 4. Limpieza masiva de -Werror para evitar Error 2
+          # 4. Quitar Werror
           find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
 
       - name: "😎 Set args"
         id: generate-args
         working-directory: ./${{ env.kernelDir }}
-        env:
-          params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          ARCH=$(echo "$params" | jq -r ".ARCH")
+          # Extraemos parámetros del JSON de forma plana para evitar errores de comillas
+          PARAMS='${{ toJSON(matrix.repos.params) }}'
+          ARCH=$(echo $PARAMS | jq -r '.ARCH')
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          args="-j$(nproc --all) O
+          
+          # Construimos los argumentos paso a paso
+          ARGS="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }}"
+          
+          # Lista de variables a extraer e integrar
+          for var in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
+            val=$(echo $PARAMS | jq -r ".$var")
+            if [ "$val" != "null" ]; then
+              ARGS="$ARGS $var=$val"
+            fi
+          done
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+
+      - name: "😋 Update KernelSU"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        if: ${{ env.withKernelSU == 'true' }}
+        run: curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+
+      - name: "👍 Make defconfig"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+
+      - name: "🎶 Build kernel"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
+
+      - name: "📤 Upload Image"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Kernel-NTSYNC-${{ env.kernelDevice }}"
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
+          

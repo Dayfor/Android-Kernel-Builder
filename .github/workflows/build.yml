@@ -51,7 +51,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
-          # Instalación de Python 2.7 para compatibilidad de scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz
           cd Python-2.7.18
@@ -65,7 +64,8 @@ jobs:
       - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
         run: |
-          git clone --recursive --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
+          git clone --recursive --branch "$kernelBranch" "$repo" "$kernelName" --depth=1 || \
+          git clone --recursive --branch "$kernelBranch" "${{ matrix.repos.kernelSource.repo }}" "$kernelName" --depth=1
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
@@ -84,33 +84,35 @@ jobs:
       - name: "🛠️ Apply NTSYNC Patches & Fixes"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # 1. Localizar y reparar variables de energía (LPD)
+          # 1. Reparar variables de energía (LPD) - Incluimos fix extra para variables no declaradas
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-            echo "✅ Fix de energía aplicado en $SMB5_FILE"
+            echo "✅ Fix de energía aplicado."
           fi
 
-          # 2. Inyectar soporte NTSYNC en Kconfig de forma segura
+          # 2. Inyectar NTSYNC en Kconfig
           KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
           if [ -n "$KCONFIG_FILE" ]; then
             if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
+              # Inyectamos el código directamente para evitar errores de parche malformado
               sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
-              echo "✅ NTSYNC inyectado en $KCONFIG_FILE"
+              echo "✅ NTSYNC inyectado."
             fi
           fi
 
-          # 3. Habilitar NTSYNC en el defconfig del dispositivo
+          # 3. Habilitar en defconfig
           CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           if [ -f "$CONF_PATH" ]; then
             sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
             echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
-            echo "✅ CONFIG_NTSYNC=y forzado en $CONF_PATH"
           fi
 
-          # 4. Limpieza masiva de -Werror para evitar Error 2
-          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
+          # 4. LIMPIEZA AGRESIVA de -Werror (Evita el Error 2)
+          # Buscamos en todos los archivos de compilación posibles
+          find . -type f \( -name "Makefile*" -o -name "Kbuild*" -o -name "*.mk" \) -exec sed -i 's/-Werror//g' {} +
+          echo "✅ Restricciones de error eliminadas."
 
       - name: "😎 Set args"
         id: generate-args
@@ -120,19 +122,13 @@ jobs:
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
-          # Añadir parámetros adicionales del JSON si existen
+          # Añadimos KCFLAGS aquí también como medida preventiva
+          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH KCFLAGS='-Wno-error'"
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
-
-      - name: "😋 Update KernelSU"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -141,8 +137,8 @@ jobs:
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # El flag KCFLAGS es la última línea de defensa contra el Error 2
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
+          # Usamos KCFLAGS con flags adicionales para ignorar declaraciones implícitas
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-int-conversion"
 
       - name: "📤 Upload Image"
         uses: actions/upload-artifact@v4

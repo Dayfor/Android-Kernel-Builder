@@ -83,10 +83,11 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
-          # Definimos KCFLAGS aquí para que se usen en todos los pasos de make
-          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-error=implicit-function-declaration\""
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
+          # Aplicando tu sugerencia de LLVM integral y KCFLAGS para silenciar errores
+          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument\""
+          
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
@@ -99,46 +100,26 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
 
-      - name: "🛠️ Fix & Patch (NTSYNC + LG V60 + Clang Optimization)"
+      - name: "🛠️ Fix & Patch (Limpieza de Makefile)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Restaurar estado limpio
-          git checkout Makefile drivers/misc/Makefile drivers/misc/Kconfig
+          # Restaurar Makefile para evitar errores de sintaxis previos
+          git checkout Makefile
           
-          # Eliminar flags de GCC que Clang no entiende (limpia los warnings del log)
+          # Eliminar flags incompatibles con Clang
           sed -i 's/-fno-inline-functions-called-once//g' Makefile
           sed -i 's/-fmerge-constants//g' Makefile
           
-          # Eliminar cualquier rastro de -Werror que fuerce paradas por advertencias
-          sed -i 's/-Werror//g' Makefile
+          # Quitar Werror de todo el código para que no se detenga por warnings
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
-
-          # Inyectar soporte NTSYNC
-          if ! grep -q "ntsync.o" drivers/misc/Makefile; then 
-            printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
-          fi
           
-          # Parche SMB5 para LG V60
+          # Inyectar soporte NTSYNC y parches de LG V60
+          if ! grep -q "ntsync.o" drivers/misc/Makefile; then printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile; fi
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
           fi
-
-      - name: "🛠️ Compilación Final"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          # Definimos flags de mitigación adicionales para Clang
-          # Agregamos -Wno-ignored-optimization-argument para silenciar los warnings que viste
-          MITIGATION_FLAGS="KCFLAGS=-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument"
-          
-          # 1. Configuración
-          make ${{ steps.generate-args.outputs.args }} $MITIGATION_FLAGS ${{ env.DEFCONFIG_NAME }}
-          
-          # 2. Compilación
-          # Intentamos compilar. Si falla, el log será más limpio ahora.
-          make ${{ steps.generate-args.outputs.args }} $MITIGATION_FLAGS
-
 
       - name: "😋 Update KernelSU"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
@@ -152,11 +133,10 @@ jobs:
       - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Paso 1: Generar config
+          # 1. Generar la configuración
           make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
           
-          # Paso 2: Compilar el kernel
-          # Usamos los args generados que ya incluyen KCFLAGS de seguridad
+          # 2. Compilar con Clang/LLVM
           make ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"

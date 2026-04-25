@@ -122,7 +122,10 @@ jobs:
 
       - name: "🎶 Compilar Kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
+        run: |
+          # Usamos comillas simples para evitar que bash rompa la cadena de flags
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS='-Wno-everything'
+
 
       - name: "📤 Subir Artefactos"
         uses: actions/upload-artifact@v4

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  Set-repos:
+  Set-repos: 
     name: "🐂 Parse repos.json"
     runs-on: ubuntu-latest
     outputs:

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  Set-repos: 
+  Set-repos:
     name: "🐂 Parse repos.json"
     runs-on: ubuntu-latest
     outputs:
@@ -82,10 +82,10 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
+          # Crucial: Forzar ARCH=arm64 para evitar que busque en x86
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          # Añadimos KCFLAGS aquí para que se hereden en todos los procesos de make
-          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option\""
+          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }}"
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
@@ -128,14 +128,14 @@ jobs:
           sed -i '/CONFIG_KPROBES/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
-      - name: "🛠️ Compilación del Kernel"
+      - name: "👍 Make defconfig"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+
+      - name: "🎶 Build kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Primero generamos el archivo de configuración (.config)
-          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-          
-          # Segundo, ejecutamos la compilación real usando los mismos argumentos
-          make ${{ steps.generate-args.outputs.args }}
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4

@@ -51,7 +51,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch libarchive-tools
-          # Install Python 2.7 for Qualcomm scripts
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -73,17 +72,25 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            
-            echo "--- Installing $name from $repo (Branch: $branch) ---"
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || \
-            git clone --recursive "$repo" "$name" --depth=1
-            
-            if [ -d "$(pwd)/$name/bin" ]; then
-              echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-            else
-              echo "$(pwd)/$name" >> $GITHUB_PATH
-            fi
+            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1
+            [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
+
+      - name: "😎 Set args"
+        id: generate-args
+        working-directory: "./${{ env.kernelDir }}"
+        env:
+          params: "${{ toJSON(matrix.repos.params) }}"
+        run: |
+          # Crucial: Forzar ARCH=arm64 para evitar que busque en x86
+          ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }}"
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
+            val=$(echo "$params" | jq -r ".$key")
+            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
+          done
+          echo "args=$args" >> $GITHUB_OUTPUT
 
       - name: "📥 Inject NTSYNC Source"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
@@ -95,60 +102,22 @@ jobs:
       - name: "🛠️ Fix & Patch (NTSYNC + LG V60 + Clang Flags)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Restore clean state for critical files
           git checkout drivers/misc/Makefile drivers/misc/Kconfig drivers/android/Makefile scripts/Makefile.extrawarn
-
-          # 2. Fix Malformed Clang Flags (The root cause of Error 2)
-          # This removes spaces around '=' in flags like -Wno-error =return-type
           find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Wno-error\s*=\s*/-Wno-error=/g' {} +
-          
-          # Remove flags that modern Clang 17+ doesn't like in legacy kernels
           find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-implicit-function-declaration//g' {} +
           find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Wno-error=return-type//g' {} +
-          
-          # Disable -Werror globally to prevent warnings from breaking the build
           find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Werror//g' {} +
-
-          # 3. Inject NTSYNC Support
-          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
-            printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
-          fi
+          if ! grep -q "ntsync.o" drivers/misc/Makefile; then printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile; fi
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
             printf "config NTSYNC\n\ttristate \"NTSYNC Support\"\n\tdefault y\n" > ntsync_config
             sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
             rm ntsync_config
           fi
-
-          # 4. LG V60 Specific: Fix SMB5 Charging Driver
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
           fi
-
-      - name: "👍 Make defconfig"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-
-      - name: "🎶 Build kernel"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          # Use KCFLAGS to enforce leniency during compilation
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
-      - name: "😎 Set args"
-        id: generate-args
-        working-directory: "./${{ env.kernelDir }}"
-        env:
-          params: "${{ toJSON(matrix.repos.params) }}"
-        run: |
-          ARCH=$(echo "$params" | jq -r ".ARCH")
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
-          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
-            val=$(echo "$params" | jq -r ".$key")
-            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
-          done
-          echo "args=$args" >> $GITHUB_OUTPUT
 
       - name: "😋 Update KernelSU"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
@@ -157,9 +126,7 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
           CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           sed -i '/CONFIG_KPROBES/d' "$CONF"
-          echo "CONFIG_KPROBES=y" >> "$CONF"
-          echo "CONFIG_HAVE_KPROBES=y" >> "$CONF"
-          echo "CONFIG_KPROBE_EVENTS=y" >> "$CONF"
+          echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
       - name: "👍 Make defconfig"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
@@ -168,7 +135,6 @@ jobs:
       - name: "🎶 Build kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Use KCFLAGS to bypass legacy syntax errors with modern Clang
           make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
 
       - name: "📤 Upload Artifacts"

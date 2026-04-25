@@ -86,44 +86,7 @@ jobs:
           
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
      
-      - name: "🛠️ Parches NTSYNC y Fixes LG V60"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          # 1. Limpiar cambios previos para evitar archivos corruptos
-          git checkout drivers/misc/Makefile drivers/misc/Kconfig
-
-          # 2. Inyectar en drivers/misc/Makefile (CON TABULADOR)
-          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
-            printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
-          fi
-
-          # 3. Inyectar en drivers/misc/Kconfig (Sintaxis correcta)
-          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
-            # Creamos un archivo temporal con la configuración
-            cat <<EOF > ntsync_config
-            config NTSYNC
-	          tristate "Windows-compatible synchronization primitives"
-          	default y
-	          help
-	          Soporte para NTSYNC (Proton/Wine) optimizado para LG V60.
-             EOF
-             
-            # Insertar después de la línea de 'Misc devices'
-            sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
-            rm ntsync_config
-          fi
-
-          # 4. Fix Energía SMB5 (Específico LG V60 Snapdragon 865)
-          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
-          if [ -n "$SMB5_FILE" ]; then
-            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
-            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-          fi
-
-          # 5. Eliminar -Werror para evitar que Clang detenga la build por advertencias
-          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
-          
-
+            
       - name: "🛠️ Parches Android 15 + NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
@@ -136,7 +99,40 @@ jobs:
           
           # 3. Inyectar Kconfig (Donde sí van los bloques 'config')
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
-            printf 'config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para Proton y Windows Sync en Android.\n' > ntsync_entry
+            printf 'config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para      - name: "🛠️ Parches de Construcción (NTSYNC + LG V60)"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: |
+          # 1. Limpiar intentos fallidos previos
+          git checkout drivers/misc/Makefile drivers/misc/Kconfig drivers/android/Makefile
+
+          # 2. Inyectar en drivers/misc/Makefile con formato correcto
+          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
+            printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
+          fi
+
+          # 3. Inyectar bloque Kconfig
+          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
+            cat <<EOF > ntsync_config
+            config NTSYNC
+	      tristate "Windows-compatible synchronization primitives"
+	        default y
+	        help
+	       Soporte para NTSYNC (Proton/Wine) optimizado para LG V60.
+           EOF
+            sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
+            rm ntsync_config
+          fi
+
+          # 4. Fix Energía SMB5 (LG V60)
+		 SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          if [ -n "$SMB5_FILE" ]; then
+            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
+            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
+          fi
+
+          # 5. Global: Desactivar -Werror para evitar fallos por advertencias
+          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
+ Proton y Windows Sync en Android.\n' > ntsync_entry
             sed -i '/menu "Misc devices"/r ntsync_entry' drivers/misc/Kconfig
           fi
 

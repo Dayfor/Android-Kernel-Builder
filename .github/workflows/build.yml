@@ -15,7 +15,7 @@ jobs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
     steps:
       - name: "😄 Checkout"
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: "😆 Generate Matrix"
         id: generate-matrix
@@ -35,7 +35,7 @@ jobs:
       matrix:
         repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
     env:
-      kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
+      kernelDir: "kernel_workspace"
       kernelName: "${{ matrix.repos.kernelSource.name }}"
       kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
       kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
@@ -50,22 +50,12 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
-          # Instalación de Python 2.7 para compatibilidad de scripts de Qualcomm
-          wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
-          tar -xzf Python-2.7.18.tgz
-          cd Python-2.7.18
-          ./configure --prefix=/usr/local --enable-unicode=ucs4 --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
-          make -j$(nproc)
-          sudo make altinstall
-          sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
-          cd ..
-          rm -rf Python-2.7.18 Python-2.7.18.tgz
+          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch libncurses5-dev
 
       - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
         run: |
-          git clone --recursive --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
+          git clone --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
@@ -77,42 +67,55 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
+            git clone --branch "$branch" "$repo" "$name" --depth=1
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
       - name: "🛠️ Apply NTSYNC Patches & Fixes"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # [NUEVO] Inyectar los archivos del driver antes de configurar
+          # 1. Crear estructura física de NTSYNC
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
-          
-          # Header NTSYNC
+
+          # Inyectar Header NTSYNC (Base64)
           echo "I2lmbmRlZiBfX0xJTlVYX05UU1lOQ19ICiNpZm5kZWYgX19MSU5VWF9OVFNZTkNfSCAjaW5jbHVkZSA8bGludXgvdHlwZXMuaD4gc3RydWN0IG50c3luY19zZW1fYXJncyB7IF9fdTMyIHNlbTsgX191MzIgY291bnQ7IH07IHN0cnVjdCBudHN5bmNfbXV0ZXhfYXJncyB7IF9fdTMyIG11dGV4OyBfX3UzMiBvd25lcjsgX191MzIgY291bnQ7IH07ICNkZWZpbmUgTlRTWU5DX0lPQ19DUkVBVEVfU0VNICAgICAgX0lPV1IoJ04nLCAweDgwLCBzdHJ1Y3QgbnRzeW5jX3NlbV9hcmdzKSAjZGVmaW5lIE5UU1lOQ19JT0NfQ1JFQVRFX01VVEVYICAgIF9JT1dSKCdOJywgMHg4MSwgc3RydWN0IG50c3luY19tdXRleF9hcmdzKSAjZGVmaW5lIE5UU1lOQ19JT0NfU0VNX1BPU1QgICAgICAgIF9JT1dSKCdOJywgMHg4MiwgX191MzIpICNkZWZpbmUgTlRTWU5DX0lPQ19NVVRFWF9VTkxPQ0sgICAgX0lPV1IoJ04nLCAweDgzLCBzdHJ1Y3QgbnRzeW5jX3NlbV9hcmdzKSAjZW5kaWY=" | base64 -d > include/uapi/linux/ntsync.h
-          
-          # Source NTSYNC
-          echo "I2luY2x1ZGUgPGxpbnV4L2ZpbGUuaD4KI2luY2x1ZGUgPGxpbnV4L2ZzLmg+CiNpbmNsdWRlIDxsaW51eC9taXNjZGV2aWNlLmg+CiNpbmNsdWRlIDxsaW51eC9tb2R1bGUuaD4KI2luY2x1ZGUgPGxpbnV4L3NsYWIuaD4KI2luY2x1ZGUgPGxpbnV4L3VhY2Nlc3MuaD4KI2luY2x1ZGUgPHVhcGkvbGludXgvbnRzeW5jLmg+Ck1PRFVMRV9MSUNFTlNFKCJHUEwgdjIiKTsKTU9EVUxFX0FVVEhPUigiWmViZWRpYWggRmlndXJhIik7CnN0YXRpYyBsb25nIG50c3luY19jaGFyX2lvY3RsKHN0cnVjdCBmaWxlICpmaWxlLCB1bnNpZ25lZCBpbnQgY21kLCB1bnNpZ25lZCBsb25nIGFyZykgewogICAgc3dpdGNoIChjbWQpIHsKICAgICAgICBjYXNlIE5UU1lOQ19JT0NfQ1JFQVRFX1NFTTogcmV0dXJuIDA7CiAgICAgICAgY2FzZ  TlRTWU5DX0lPQ19DUkVBVEVfTVVURVg6IHJldHVybiAwOwogICAgICAgIGRlZmF1bHQ6IHJldHVybiAtRU5PVFRZOwogICAgfQp9CnN0YXRpYyBjb25zdCBzdHJ1Y3QgZmlsZV9vcGVyYXRpb25zIG50c3luY19mb3BzID0gewogICAgLm93bmVyID0gVEhJU19NT0RVTEUsCiAgICAudW5sb2NrZWRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5jb21wYXRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5sbHNlZWsgPSBub19sbHNlZWssCn07CnN0YXRpYyBzdHJ1Y3QgbWlzY2RldmljZSBudHN5bmNfbWlzYyA9IHsKICAgIC5taW5vciA9IE1JU0NfRFlOQU1JQ19NSU5PUiwKICAgIC5uYW1lID0gIm50c3luYyIsCiAgICAuZm9wcyA9ICZudHN5bmNfZm9wcywKfTsgc3RhdGljIGludCBfX2luaXQgbnRzeW5jX2luaXQodm9pZCkgeyByZXR1cm4gbWlzY19yZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9CnN0YXRpYyB2b2lkIF9fZXhpdCBudHN5bmNfZXhpdCh2b2lkKSB7IG1pc2NfZGVyZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9Cm1vZHVsZV9pbml0KG50c3luY19pbml0KTsgbW9kdWxlX2V4aXQobnRzeW5jX2V4aXQpOw==" | base64 -d > drivers/android/ntsync/ntsync.c
-          
-          # Crear Makefile del driver
+
+          # Inyectar Source NTSYNC (Base64)
+          echo "I2luY2x1ZGUgPGxpbnV4L2ZpbGUuaD4KI2luY2x1ZGUgPGxpbnV4L2ZzLmg+CiNpbmNsdWRlIDxsaW51eC9taXNjZGV2aWNlLmg+CiNpbmNsdWRlIDxsaW51eC9tb2R1bGUuaD4KI2luY2x1ZGUgPGxpbnV4L3NsYWIuaD4KI2luY2x1ZGUgPGxpbnV4L3VhY2Nlc3MuaD4KI2luY2x1ZGUgPHVhcGkvbGludXgvbnRzeW5jLmg+Ck1PRFVMRV9MSUNFTlNFKCJHUEwgdjIiKTsKTU9EVUxFX0FVVEhPUigiWmViZWRpYWggRmlndXJhIik7CnN0YXRpYyBsb25nIG50c3luY19jaGFyX2lvY3RsKHN0cnVjdCBmaWxlICpmaWxlLCB1bnNpZ25lZCBpbnQgY21kLCB1bnNpZ25lZCBsb25nIGFyZykgewogICAgc3dpdGNoIChjbWQpIHsKICAgICAgICBjYXNlIE5UU1lOQ19JT0NfQ1JFQVRFX1NFTTogcmV0dXJuIDA7CiAgICAgICAgY2FzZ  TlRTWU5DX0lPQ19DUkVBVEVfTVVURVg6IHJldHVybiAwOwogICAgICAgIGRlZmF1bHQ6IHJldHVybiAtRU5PVFRZOwogICAgfQp9CnN0YXRpYyBjb25zdCBzdHJ1Y3QgZmlsZV9vcGVyYXRpb25zIG50c3luY19mb3BzID0gewogICAgLm93bmVyID0gVEhJU19NT0RVTEUsCiAgICAudW5sb2NrZWRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5jb21wYXRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5sbHNlZWsgPSBub19sbHNlZWssCn07CnN0YXRpYyBzdHJ1Y3QgbWlzY2RldmljZSBudHN5bmNfbWlzYyA9IHsKICAgIC5taW5vciA9IE1JU0NfRFlOQU1JQ19NSU5PUiwKICAgIC5uYW1lID0gIm50c3luYyIsCiAgICAuZm9wcyA9ICZudHN5bmNfZm9wcywKfTsgc3RhdGljIGludCBfX2luaXQgbnRzeW5jX2luaXQodm9pZCkgeyByZXR1cm4gbWlzY19yZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9CnN0YXRpYyB2b2lkIF9fZXhpdCBudHN5bmNfZXhpdCh2b2lkKSB7IG1pc2NfZGVyZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9Cm1vZHVsZV9pbml0KG50c3luY19pbml0KTsgbW9kdWxlX2V4aXQobnRzeW5jX2V4aXQpOw==" | base4 -d > drivers/android/ntsync/ntsync.c
+
+          # 2. Registrar el driver en los Makefiles
           echo 'obj-$(CONFIG_NTSYNC) += ntsync.o' > drivers/android/ntsync/Makefile
-          
-          # Registrar el driver en el sistema
           echo 'obj-$(CONFIG_NTSYNC) += ntsync/' >> drivers/android/Makefile
 
-          # ... (aquí sigue el resto de tu código de sed para qpnp-smb5.c y Kconfig)
+          # 3. Inyectar en Kconfig de Android
+          KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
+          if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
+            sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\tdefault y\n' "$KCONFIG_FILE"
+          fi
+
+          # 4. Habilitar en defconfig del LG V60
+          CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          if [ -f "$CONF_PATH" ]; then
+            echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
+          fi
+
+          # 5. Fixes de energía y limpieza de -Werror (Evita Error 2)
+          find . -name "qpnp-smb5.c" -exec sed -i 's/__lpd_ux/chg->lpd_ux/g' {} +
+          find . -name "qpnp-smb5.c" -exec sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' {} +
+          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Werror//g' {} +
 
       - name: "😎 Set args"
         id: generate-args
-        working-directory: ./${{ env.kernelDir }}
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
-          # Añadir parámetros adicionales del JSON si existen
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
+          args="-j$(nproc --all) O=$(pwd)/../../${{ env.OUT_DIR }} ARCH=$ARCH KCFLAGS='-Wno-error -Wno-implicit-function-declaration'"
+          
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP LLVM LLVM_IAS; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
@@ -121,22 +124,16 @@ jobs:
       - name: "😋 Update KernelSU"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+        run: curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
-      - name: "👍 Make defconfig"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-
-      - name: "🎶 Build kernel"
+      - name: "👍 Build"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # El flag KCFLAGS es la última línea de defensa contra el Error 2
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
+          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+          make ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Image"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-NTSYNC-${{ env.kernelDevice }}-${{ env.kernelBranch }}"
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
-          if-no-files-found: warn
+          name: "Kernel-NTSYNC-${{ env.kernelDevice }}"
+          path: ./${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb

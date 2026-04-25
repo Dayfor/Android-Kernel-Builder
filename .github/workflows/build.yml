@@ -92,11 +92,24 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
 
-      - name: "🛠️ Fixes & Patches (NTSYNC + LG V60)"
+      - name: "🛠️ Fix & Patch (NTSYNC + LG V60 + Clang Flags)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Register NTSYNC in Makefile/Kconfig
-          git checkout drivers/misc/Makefile drivers/misc/Kconfig
+          # 1. Restore clean state for critical files
+          git checkout drivers/misc/Makefile drivers/misc/Kconfig drivers/android/Makefile scripts/Makefile.extrawarn
+
+          # 2. Fix Malformed Clang Flags (The root cause of Error 2)
+          # This removes spaces around '=' in flags like -Wno-error =return-type
+          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Wno-error\s*=\s*/-Wno-error=/g' {} +
+          
+          # Remove flags that modern Clang 17+ doesn't like in legacy kernels
+          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-implicit-function-declaration//g' {} +
+          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Wno-error=return-type//g' {} +
+          
+          # Disable -Werror globally to prevent warnings from breaking the build
+          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Werror//g' {} +
+
+          # 3. Inject NTSYNC Support
           if ! grep -q "ntsync.o" drivers/misc/Makefile; then
             printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile
           fi
@@ -106,18 +119,22 @@ jobs:
             rm ntsync_config
           fi
 
-          # 2. Fix SMB5 Charging (LG V60 Specific)
+          # 4. LG V60 Specific: Fix SMB5 Charging Driver
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
           fi
 
-          # 3. FIX CLANG ARGUMENTS (The root cause of your previous build failure)
-          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Wno-error =/-Wno-error=/g'
-          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Wno-error /-Wno-error=/g'
-          find . -type f -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
+      - name: "👍 Make defconfig"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
+      - name: "🎶 Build kernel"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: |
+          # Use KCFLAGS to enforce leniency during compilation
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
       - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"

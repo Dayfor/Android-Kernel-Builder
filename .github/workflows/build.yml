@@ -137,7 +137,7 @@ jobs:
         run: |
           if [ -d "./KernelSU" ]; then
             rm -rf "./KernelSU"
-          fi
+          fi 
           if [ -d "./drivers/kernelsu" ]; then
             rm -rf "./drivers/kernelsu"
           fi

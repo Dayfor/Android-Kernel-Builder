@@ -1,4 +1,4 @@
-Name: "Kernel Build: NTSYNC Edition"
+name: "Kernel Build: NTSYNC Edition"
 
 env:
   CONFIGURATION: "repos.json"
@@ -9,7 +9,7 @@ on:
 
 jobs:
   Set-repos:
-    name: "🐂 Parse repos.json"
+    name: "🐂 Parsear repos.json"
     runs-on: ubuntu-latest
     outputs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
@@ -17,7 +17,7 @@ jobs:
       - name: "😄 Checkout"
         uses: actions/checkout@v3
 
-      - name: "😆 Generate Matrix"
+      - name: "😆 Generar Matriz"
         id: generate-matrix
         run: |
           echo "repos<<EOF" >> $GITHUB_OUTPUT
@@ -25,7 +25,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
-    name: "🐎 Build kernel"
+    name: "🐎 Compilar Kernel"
     runs-on: ubuntu-latest
     needs:
       - Set-repos
@@ -44,13 +44,14 @@ jobs:
       withKernelSU: "${{ matrix.repos.withKernelSU }}"
       
     steps:
-      - name: "✨ Create working dir"
+      - name: "✨ Crear directorio de trabajo"
         run: mkdir -p "$kernelDir"
 
-      - name: "⭐ Install prerequisites"
+      - name: "⭐ Instalar prerrequisitos"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
+          # Instalación de Python 2.7 para scripts heredados de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz
           cd Python-2.7.18
@@ -61,12 +62,12 @@ jobs:
           cd ..
           rm -rf Python-2.7.18 Python-2.7.18.tgz
 
-      - name: "🌟 Clone kernel source"
+      - name: "🌟 Clonar código fuente del Kernel"
         working-directory: ./${{ env.kernelDir }}
         run: |
           git clone --recursive --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
 
-      - name: "💫 Get toolchains"
+      - name: "💫 Descargar Toolchains"
         working-directory: ./${{ env.kernelDir }}
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -80,90 +81,4 @@ jobs:
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
-      - name: "🛠️ Apply NTSYNC Patches & Fixes"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          # 1. Localizar y reparar variables de energía (LPD)
-          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
-          if [ -n "$SMB5_FILE" ]; then
-            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
-            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-            echo "✅ Fix de energía aplicado en $SMB5_FILE"
-          fi
-
-          # 2. Inyectar soporte NTSYNC en Kconfig de forma segura
-          KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
-          if [ -n "$KCONFIG_FILE" ]; then
-            if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
-              sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
-              echo "✅ NTSYNC inyectado en $KCONFIG_FILE"
-            fi
-          fi
-
-          # 3. Habilitar NTSYNC en el defconfig del dispositivo
-          CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          if [ -f "$CONF_PATH" ]; then
-             sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
-             echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
-             echo "✅ CONFIG_NTSYNC=y forzado en $CONF_PATH"
-          fi
-
-          # 4. Limpieza masiva de -Werror para evitar Error 2
-          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
-
-      - name: "Fix Makefile Syntax for LG V60"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          # Nota: He ajustado la ruta para que sea relativa al directorio del kernel clonado
-          MAKEFILE_PATH="drivers/android/Makefile"
-          if [ -f "$MAKEFILE_PATH" ]; then
-            echo "Corrigiendo separadores en $MAKEFILE_PATH..."
-            # 1. Eliminar cualquier espacio en blanco al inicio de las líneas
-            sed -i 's/^[[:space:]]*//' "$MAKEFILE_PATH"
-            # 2. Insertar un Tabulador real al inicio de las líneas que empiezan con obj-
-            sed -i 's/^obj-/\tobj-/' "$MAKEFILE_PATH"
-            # 3. Verificación visual en el log
-            head -n 5 "$MAKEFILE_PATH"
-          else
-            echo "Aviso: No se encontró el archivo en $MAKEFILE_PATH, buscando ruta alternativa..."
-            # Búsqueda recursiva por si la estructura de carpetas varía
-            ALT_PATH=$(find . -name "Makefile" | grep "drivers/android/Makefile")
-            if [ -n "$ALT_PATH" ]; then
-               sed -i 's/^[[:space:]]*//' "$ALT_PATH"
-               sed -i 's/^obj-/\tobj-/' "$ALT_PATH"
-               echo "✅ Corregido en ruta alternativa: $ALT_PATH"
-            fi
-          fi
-
-      - name: "😎 Set args"
-        id: generate-args
-        working-directory: ./${{ env.kernelDir }}
-        env:
-          params: "${{ toJSON(matrix.repos.params) }}"
-        run: |
-          ARCH=$(echo "$params" | jq -r ".ARCH")
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
-          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
-            val=$(echo "$params" | jq -r ".$key")
-            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
-          done
-          echo "args=$args" >> $GITHUB_OUTPUT
-
-      - name: "😋 Update KernelSU"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-
-      - name: "🎶 Build kernel"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
-
-      - name: "📤 Upload Image"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Kernel-NTSYNC-${{ env.kernelDevice }}-${{ env.kernelBranch }}"
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
-          if-no-files-found: warn
+      - name: "🛠️ Parches NTSYNC y

@@ -146,7 +146,7 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
-      -      - name: "🎶 Build kernel"
+      - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}

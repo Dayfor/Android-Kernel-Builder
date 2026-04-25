@@ -147,11 +147,6 @@ jobs:
           # Ahora que existe el .config, procedemos a la compilación real
           make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
           
-      - name: "🎶 Compilar Kernel"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
-
       - name: "📤 Subir Artefactos"
         uses: actions/upload-artifact@v4
         with:

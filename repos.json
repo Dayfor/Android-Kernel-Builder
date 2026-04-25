@@ -10,7 +10,7 @@
       {
         "name": "clang",
         "repo": "https://github.com/ZyCromerZ/Clang",
-        "branch": "14"
+        "branch": "19"
       },
       {
         "name": "aarch64-gcc",

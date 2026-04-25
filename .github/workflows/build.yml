@@ -52,7 +52,7 @@ jobs:
           git clone --recursive --branch ${{ env.kernelBranch }} ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1 || \
           git clone --recursive ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1
 
-            - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
+      - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           # Intentar descargar el parche desde el mirror oficial de NTSYNC para kernels 4.19+

@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: "😄 Checkout"
         uses: actions/checkout@v3
- 
+
       - name: "😆 Generar Matriz"
         id: generate-matrix
         run: |
@@ -51,7 +51,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
-          # Instalación de Python 2.7 para scripts heredados de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz
           cd Python-2.7.18
@@ -62,7 +61,7 @@ jobs:
           cd ..
           rm -rf Python-2.7.18 Python-2.7.18.tgz
 
-      - name: "🌟 Clonar código fuente del Kernel"
+      - name: "🌟 Clonar código fuente"
         working-directory: ./${{ env.kernelDir }}
         run: |
           git clone --recursive --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
@@ -81,4 +80,69 @@ jobs:
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
-      - name: "🛠️ Parches NTSYNC y
+      - name: "🛠️ Parches NTSYNC y Fixes"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          if [ -n "$SMB5_FILE" ]; then
+            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
+            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
+          fi
+
+          KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
+          if [ -n "$KCONFIG_FILE" ]; then
+            if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
+              sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
+            fi
+          fi
+
+          CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          if [ -f "$CONF_PATH" ]; then
+            sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
+            echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
+          fi
+
+          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
+
+      - name: "🔧 Fix Sintaxis Makefile (LG V60)"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          MAKEFILE_PATH=$(find . -name "Makefile" | grep "drivers/android/Makefile")
+          if [ -f "$MAKEFILE_PATH" ]; then
+            sed -i 's/^[[:space:]]*//' "$MAKEFILE_PATH"
+            sed -i 's/^obj-/\tobj-/' "$MAKEFILE_PATH"
+            echo "✅ Makefile corregido en $MAKEFILE_PATH"
+          fi
+
+      - name: "😎 Configurar Argumentos"
+        id: generate-args
+        working-directory: ./${{ env.kernelDir }}
+        env:
+          params: "${{ toJSON(matrix.repos.params) }}"
+        run: |
+          ARCH=$(echo "$params" | jq -r ".ARCH")
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
+            val=$(echo "$params" | jq -r ".$key")
+            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
+          done
+          echo "args=$args" >> $GITHUB_OUTPUT
+
+      - name: "😋 Integrar KernelSU"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        if: ${{ env.withKernelSU == 'true' }}
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+
+      - name: "🎶 Compilar Kernel"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error"
+
+      - name: "📤 Subir Artefactos"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Kernel-NTSYNC-${{ env.kernelDevice }}-${{ env.kernelBranch }}"
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
+          if-no-files-found: warn

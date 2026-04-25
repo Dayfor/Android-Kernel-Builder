@@ -1,37 +1,31 @@
-[
-  {
+[  {
     "kernelSource": {
-      "name": "kernel_lge_sm8250",
-      "repo": "https://github.com/TU_USUARIO/TU_REPO_KERNEL",
-      "branch": "master",
-      "device": "v60"
+      "name": "mainline-kernel",
+      "repo": "https://gitlab.com/msm8998-mainline/linux",
+      "branch": "mainline/6.1",
+      "device": "msm8998"
     },
+    "withKernelSU": true,
     "toolchains": [
       {
-        "name": "clang",
-        "repo": "https://github.com/ZyCromerZ/Clang",
-        "branch": "18"
+        "repo": "https://android.googlesource.com/platform/prebuilts/gas/linux-x86",
+        "branch": "master",
+        "name": "gas"
       },
       {
-        "name": "gcc-64",
-        "repo": "https://github.com/mvaisakh/gcc-arm64",
-        "branch": "gcc-master"
+        "repo": "https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone/",
+        "branch": "11",
+        "name": "clang"
       }
     ],
     "params": {
       "ARCH": "arm64",
-      "CC": "clang",
-      "NM": "llvm-nm",
-      "OBJCOPY": "llvm-objcopy",
-      "OBJDUMP": "llvm-objdump",
-      "STRIP": "llvm-strip",
-      "LD": "ld.lld",
-      "AR": "llvm-ar",
-      "CROSS_COMPILE": "aarch64-elf-",
-      "CROSS_COMPILE_ARM32": "arm-eabi-",
+      "CROSS_COMPILE": "aarch64-linux-gnu-",
+      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
+      "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
       "CLANG_TRIPLE": "aarch64-linux-gnu-",
-      "EXTRA_CFLAGS": "-Wno-error"
-    },
-    "withKernelSU": "true"
+      "AR": "",
+      "CC": "clang"
+    }
   }
 ]

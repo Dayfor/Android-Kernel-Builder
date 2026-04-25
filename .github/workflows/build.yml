@@ -131,6 +131,7 @@ jobs:
       - name: "👍 Make defconfig"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+             make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option"
 
       - name: "🎶 Build kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"

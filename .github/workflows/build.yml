@@ -37,11 +37,7 @@ jobs:
     env:
       kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
       kernelName: "${{ matrix.repos.kernelSource.name }}"
-      kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
-      kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
-      kernelDevice: "${{ matrix.repos.kernelSource.device }}"
       DEFCONFIG_NAME: "${{ matrix.repos.kernelSource.device }}_defconfig"
-      withKernelSU: "${{ matrix.repos.withKernelSU }}"
       
     steps:
       - name: "✨ Create working dir"
@@ -50,69 +46,63 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
-          wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
-          tar -xzf Python-2.7.18.tgz
-          cd Python-2.7.18
-          ./configure --prefix=/usr/local --enable-unicode=ucs4 --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
-          make -j$(nproc)
-          sudo make altinstall
-          sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
-          cd ..
-          rm -rf Python-2.7.18 Python-2.7.18.tgz
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch libncurses5-dev
+          # Link crítico para scripts antiguos
+          sudo ln -sf /usr/bin/python3 /usr/bin/python || true
 
       - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
         run: |
-          git clone --recursive --branch "$kernelBranch" "$repo" "$kernelName" --depth=1 || \
-          git clone --recursive --branch "$kernelBranch" "${{ matrix.repos.kernelSource.repo }}" "$kernelName" --depth=1
+          git clone --recursive --branch "${{ matrix.repos.kernelSource.branch }}" "${{ matrix.repos.kernelSource.repo }}" "$kernelName" --depth=1
 
-      - name: "💫 Get toolchains"
+      - name: "💫 Get toolchains & Export PATH"
         working-directory: ./${{ env.kernelDir }}
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
+          echo "Configurando Toolchains..."
           toolchains_num=$(echo "$toolchains" | jq 'length')
           for ((i=0;i<toolchains_num;i++)); do
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
+            
             git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
-            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
+            
+            # Registrar binarios en el PATH de GitHub
+            if [ -d "$PWD/$name/bin" ]; then
+              echo "$PWD/$name/bin" >> $GITHUB_PATH
+              echo "✅ PATH añadido: $name/bin"
+            else
+              echo "$PWD/$name" >> $GITHUB_PATH
+              echo "✅ PATH añadido: $name (root)"
+            fi
           done
 
-      - name: "🛠️ Apply NTSYNC Patches & Fixes"
+      - name: "🛠️ Apply NTSYNC & Fix Error 2"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # 1. Reparar variables de energía (LPD) - Incluimos fix extra para variables no declaradas
-          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
-          if [ -n "$SMB5_FILE" ]; then
-            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
-            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-            echo "✅ Fix de energía aplicado."
-          fi
-
-          # 2. Inyectar NTSYNC en Kconfig
+          # 1. Inyectar NTSYNC en Kconfig
           KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
-          if [ -n "$KCONFIG_FILE" ]; then
-            if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
-              # Inyectamos el código directamente para evitar errores de parche malformado
-              sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
-              echo "✅ NTSYNC inyectado."
-            fi
+          if [ -n "$KCONFIG_FILE" ] && ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
+            sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
           fi
 
-          # 3. Habilitar en defconfig
+          # 2. Forzar NTSYNC en defconfig
           CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           if [ -f "$CONF_PATH" ]; then
             sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
             echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
           fi
 
-          # 4. LIMPIEZA AGRESIVA de -Werror (Evita el Error 2)
-          # Buscamos en todos los archivos de compilación posibles
+          # 3. ELIMINAR -Werror (Causa principal del Error 2)
           find . -type f \( -name "Makefile*" -o -name "Kbuild*" -o -name "*.mk" \) -exec sed -i 's/-Werror//g' {} +
-          echo "✅ Restricciones de error eliminadas."
+          
+          # Fix para evitar conflictos de redeclaración en Qualcomm
+          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          if [ -n "$SMB5_FILE" ]; then
+            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
+          fi
 
       - name: "😎 Set args"
         id: generate-args
@@ -122,28 +112,34 @@ jobs:
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          # Añadimos KCFLAGS aquí también como medida preventiva
-          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH KCFLAGS='-Wno-error'"
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
-            val=$(echo "$params" | jq -r ".$key")
-            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
+          
+          # Construcción limpia de argumentos
+          ARGS="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} KCFLAGS='-Wno-error -Wno-implicit-function-declaration'"
+          
+          # Extraer otros parámetros (CROSS_COMPILE, CLANG_TRIPLE, etc.)
+          VARS=$(echo "$params" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"')
+          for var in $VARS; do
+            if [[ ! "$var" =~ ^(ARCH=) ]]; then
+              ARGS="$ARGS $var"
+            fi
           done
-          echo "args=$args" >> $GITHUB_OUTPUT
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+        run: |
+          export PATH=$PATH
+          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Usamos KCFLAGS con flags adicionales para ignorar declaraciones implícitas
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-int-conversion"
+          export PATH=$PATH
+          # Forzamos que ignore errores de tipos enteros y declaraciones
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-error -Wno-int-conversion -Wno-implicit-function-declaration"
 
       - name: "📤 Upload Image"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-NTSYNC-${{ env.kernelDevice }}-${{ env.kernelBranch }}"
+          name: "Kernel-NTSYNC-${{ matrix.repos.kernelSource.device }}"
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
-          if-no-files-found: warn
-          

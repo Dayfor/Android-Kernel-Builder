@@ -1,4 +1,4 @@
-name: "Build kernels (Android 15 + NTSYNC)"
+name: "Kernel Build: NTSYNC Edition"
 
 env:
   CONFIGURATION: "repos.json"
@@ -21,7 +21,7 @@ jobs:
         id: generate-matrix
         run: |
           echo "repos<<EOF" >> $GITHUB_OUTPUT
-          cat  ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
+          cat ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
@@ -35,23 +35,23 @@ jobs:
       matrix:
         repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
     env:
-      kernelDir: ${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}
-      kernelName: ${{ matrix.repos.kernelSource.name }}
-      kernelRepo: ${{ matrix.repos.kernelSource.repo }}
-      kernelBranch: ${{ matrix.repos.kernelSource.branch }}
-      kernelDevice: ${{ matrix.repos.kernelSource.device }}
-      DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.device }}_defconfig
-      withKernelSU: ${{ matrix.repos.withKernelSU }}
+      kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
+      kernelName: "${{ matrix.repos.kernelSource.name }}"
+      kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
+      kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
+      kernelDevice: "${{ matrix.repos.kernelSource.device }}"
+      DEFCONFIG_NAME: "${{ matrix.repos.kernelSource.device }}_defconfig"
+      withKernelSU: "${{ matrix.repos.withKernelSU }}"
       
     steps:
       - name: "✨ Create working dir"
-        run: mkdir -p $kernelDir
+        run: mkdir -p "$kernelDir"
 
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools jq patch
-          # Instalación de Python 2.7 (Legacy)
+          # Instalación de Python 2.7 para compatibilidad de scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz
           cd Python-2.7.18
@@ -65,54 +65,52 @@ jobs:
       - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
         run: |
-          git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
+          git clone --recursive --branch "$kernelBranch" "$kernelRepo" "$kernelName" --depth=1
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
-          toolchains_num="$(echo $toolchains | jq 'length')"
+          toolchains_num=$(echo "$toolchains" | jq 'length')
           for ((i=0;i<toolchains_num;i++)); do
-            name=$(echo $toolchains | jq -r ".[$i].name")
-            repo=$(echo $toolchains | jq -r ".[$i].repo")
-            branch=$(echo $toolchains | jq -r ".[$i].branch")
-            git clone --recursive --branch $branch $repo $name --depth=1
+            name=$(echo "$toolchains" | jq -r ".[$i].name")
+            repo=$(echo "$toolchains" | jq -r ".[$i].repo")
+            branch=$(echo "$toolchains" | jq -r ".[$i].branch")
+            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
-      - name: "🛠️ Apply Android 15 & NTSYNC Patches"
+      - name: "🛠️ Apply NTSYNC Patches & Fixes"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # 1. Fix variables de energía (LPD UX)
-          sed -i 's/__lpd_ux/chg->lpd_ux/g' drivers/power/supply/qcom/qpnp-smb5.c || true
+          # 1. Localizar y reparar variables de energía (LPD)
+          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          if [ -n "$SMB5_FILE" ]; then
+            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
+            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
+            echo "✅ Fix de energía aplicado en $SMB5_FILE"
+          fi
 
-          # 2. Registrar driver NTSYNC en Kconfig
-          cat <<EOF > ntsync.patch
-          --- a/drivers/android/Kconfig
-          +++ b/drivers/android/Kconfig
-          @@ -10,6 +10,12 @@
-           	  The binder API is the primary method of inter-process communication
-           	  (IPC) for the Android platform.
-           
-          +config NTSYNC
-          +	tristate "Windows-compatible synchronization primitives"
-          +	help
-          +	  Soporte para primitivas de sincronización compatibles con Windows NT.
-          +
-           config ANDROID_BINDERFS
-           	bool "Android Binder filesystem"
-          EOF
-          patch -p1 < ntsync.patch || echo "NTSYNC patch already applied."
+          # 2. Inyectar soporte NTSYNC en Kconfig de forma segura
+          KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
+          if [ -n "$KCONFIG_FILE" ]; then
+            if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
+              sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para primitivas de sincronización compatibles con Windows NT.\n' "$KCONFIG_FILE"
+              echo "✅ NTSYNC inyectado en $KCONFIG_FILE"
+            fi
+          fi
 
-          # 3. Inyectar flags de Android 15 y NTSYNC en el defconfig
-          echo "CONFIG_NTSYNC=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_ANDROID_BINDERFS=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_BPF_SYSCALL=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_USERFAULTFD=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          # 3. Habilitar NTSYNC en el defconfig del dispositivo
+          CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          if [ -f "$CONF_PATH" ]; then
+            sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
+            echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
+            echo "✅ CONFIG_NTSYNC=y forzado en $CONF_PATH"
+          fi
 
-          # 4. Desactivar Werror para evitar que el compilador se detenga por advertencias
-          sed -i 's/-Werror//g' Makefile
+          # 4. Limpieza masiva de -Werror para evitar Error 2
+          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
 
       - name: "😎 Set args"
         id: generate-args
@@ -120,54 +118,6 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          ARCH=$(echo $params | jq -r ".ARCH")
+          ARCH=$(echo "$params" | jq -r ".ARCH")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
-          
-          args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH"
-          # Añadir parámetros dinámicos desde repos.json
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
-            val=$(echo $params | jq -r ".$key")
-            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
-          done
-          echo "args=$args" >> $GITHUB_OUTPUT
-
-      - name: "😋 Update KernelSU"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-          {
-            echo "CONFIG_KPROBES=y"
-            echo "CONFIG_HAVE_KPROBES=y"
-            echo "CONFIG_KPROBE_EVENTS=y"
-          } >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-
-      - name: "👍 Make defconfig"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-    
-      - name: "🛠️ Limpieza de restricciones"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          # Elimina todas las menciones de -Werror en cualquier Makefile del proyecto
-          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
-          # Fix específico para los drivers de energía de Qualcomm que mencionamos antes
-          sed -i 's/__lpd_ux/chg->lpd_ux/g' drivers/power/supply/qcom/qpnp-smb5.c || true
-          
-      - name: "🎶 Build kernel"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        env:
-          args: ${{ steps.generate-args.outputs.args }}
-        run: |
-          # El flag -Wno-error es el que evita el "Error 2" por advertencias
-          make ${args} KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-int-conversion"
-
-      - name: "💛 Upload Artifacts"
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel-A15-NTSYNC-${{ env.kernelDevice }}
-          path: |
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtb
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img
+          args="-j$(nproc --all) O

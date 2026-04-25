@@ -23,7 +23,6 @@ jobs:
           echo "repos<<EOF" >> $GITHUB_OUTPUT
           cat ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
   Build-Kernel:
     name: "🐎 Build kernel"
     runs-on: ubuntu-latest
@@ -57,7 +56,6 @@ jobs:
           make -j$(nproc) && sudo make altinstall
           sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
           cd .. && rm -rf Python-2.7.18*
-
       - name: "🌟 Clone kernel source"
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
@@ -75,7 +73,6 @@ jobs:
             git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1
             [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
-
       - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
@@ -91,14 +88,12 @@ jobs:
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
-
       - name: "📥 Inject NTSYNC Source"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           mkdir -p include/uapi/linux
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
-
       - name: "🛠️ Fix & Patch (NTSYNC + LG V60 + Clang Flags)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
@@ -118,7 +113,6 @@ jobs:
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
             sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
           fi
-
       - name: "😋 Update KernelSU"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         if: ${{ env.withKernelSU == 'true' }}
@@ -127,7 +121,6 @@ jobs:
           CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           sed -i '/CONFIG_KPROBES/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
-
       - name: "👍 Make defconfig"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
@@ -136,7 +129,6 @@ jobs:
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           make ${{ steps.generate-args.outputs.args }} KCFLAGS="-Wno-everything"
-
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:

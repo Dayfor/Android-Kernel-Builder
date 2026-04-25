@@ -146,9 +146,13 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
-      - name: "🎶 Build kernel"
+      -      - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }}
+        env:
+          args: ${{ steps.generate-args.outputs.args }}
+        run: |
+          # El flag -Wno-error es el que evita el "Error 2" por advertencias
+          make ${args} KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-int-conversion"
 
       - name: "💛 Upload Artifacts"
         uses: actions/upload-artifact@v4

@@ -1,16 +1,16 @@
-[
+[[
   {
     "kernelSource": {
       "name": "kernel_lge_sm8250",
-      "repo": "https://github.com/tu_usuario/kernel_lge_sm8250",
-      "branch": "master", 
+      "repo": "https://github.com/tu-usuario/kernel_lge_sm8250",
+      "branch": "master",
       "device": "v60"
     },
     "toolchains": [
       {
         "name": "clang",
         "repo": "https://github.com/ZyCromerZ/Clang",
-        "branch": "14"
+        "branch": "18"
       },
       {
         "name": "gcc-64",
@@ -32,3 +32,4 @@
     "withKernelSU": "true"
   }
 ]
+  

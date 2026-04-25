@@ -118,8 +118,7 @@ jobs:
           MAKEFILE_PATH="kernel_lge_sm8250_vendor/timelm/kernel_lge_sm8250/drivers/android/Makefile"
           if [ -f "$MAKEFILE_PATH" ]; then
             echo "Corrigiendo separadores en $MAKEFILE_PATH..."
-
-
+            
           # 1. Eliminar cualquier espacio en blanco al inicio de las líneas
             sed -i 's/^[[:space:]]*//' "$MAKEFILE_PATH"
           

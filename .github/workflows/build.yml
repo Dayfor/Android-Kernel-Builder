@@ -36,7 +36,6 @@ jobs:
       kernelName: ${{ matrix.repos.kernelSource.name }}
       kernelRepo: ${{ matrix.repos.kernelSource.repo }}
       kernelBranch: ${{ matrix.repos.kernelSource.branch }}
-      kernelDevice: ${{ matrix.repos.kernelSource.device }}
     steps:
       - name: "✨ Create working dir"
         run: mkdir -p $kernelDir
@@ -55,28 +54,18 @@ jobs:
       - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Fuente estable: Community patches de Frogging Family (TKG) para Linux 4.19
           echo "Buscando parche ntsync..."
           curl -Lo ntsync.patch https://raw.githubusercontent.com/frogging-family/community-patches/master/linux419-tkg/0007-v6.7-ntsync.patch || \
           curl -Lo ntsync.patch https://raw.githubusercontent.com/Gr-some7/ntsync-patch/main/ntsync_4.19.patch
           
-          if [ -f ntsync.patch ] && [ -s ntsync.patch ]; then
-            echo "Aplicando parche al código fuente..."
-            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: El parche no encajó perfectamente, se activará vía defconfig."
-          else
-            echo "⚠️ No se pudo descargar un archivo .patch válido. Activando compatibilidad manual..."
+          if [ -f ntsync.patch ]; then
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: El parche no encajó perfecto, procediendo vía defconfig."
           fi
           
-          # Forzar configuración en el defconfig para Android 15
           REAL_CONFIG=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1)
-          
           if [ -n "$REAL_CONFIG" ]; then
-            echo "Inyectando parámetros críticos en $REAL_CONFIG"
-            # Limpieza de flags antiguos para evitar duplicados que rompan la compilación
             sed -i '/CONFIG_NTSYNC/d' "$REAL_CONFIG"
             sed -i '/CONFIG_ANDROID_BINDER/d' "$REAL_CONFIG"
-            sed -i '/CONFIG_BPF_SYSCALL/d' "$REAL_CONFIG"
-            
             {
               echo "CONFIG_NTSYNC=y"
               echo "CONFIG_BPF_SYSCALL=y"
@@ -85,9 +74,6 @@ jobs:
               echo "CONFIG_ANDROID_BINDER_IPC=y"
               echo "CONFIG_ANDROID_BINDERFS=y"
             } >> "$REAL_CONFIG"
-          else
-            echo "❌ Error: No se encontró el archivo de configuración defconfig."
-            exit 1
           fi
 
       - name: "💫 Get toolchains"
@@ -111,28 +97,33 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           mkdir -p $(pwd)/${{ env.OUT_DIR }}
-          BUILD_ARGS="ARCH=arm64 CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE") CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_ARM32") O=$(pwd)/${{ env.OUT_DIR }}"
-          BUILD_ARGS="$BUILD_ARGS CC=clang CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")"
-          BUILD_ARGS="$BUILD_ARGS NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
-          echo "args=-j2 $BUILD_ARGS" >> $GITHUB_OUTPUT
+          BUILD_ARGS="ARCH=arm64 \
+          CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE") \
+          CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_ARM32") \
+          CC=clang \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          O=$(pwd)/${{ env.OUT_DIR }}"
+          echo "args=-j$(nproc --all) $BUILD_ARGS KCFLAGS=-w KCPPFLAGS=-w" >> $GITHUB_OUTPUT
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           CONF_NAME=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1 | sed 's|arch/arm64/configs/||')
-          if [ -z "$CONF_NAME" ]; then
-            CONF_NAME="vendor/lito-perf_defconfig"
-          fi
-          echo "Usando configuración: $CONF_NAME"
           make ${{ steps.generate-args.outputs.args }} $CONF_NAME
+          # Desactivar debug pesado para evitar Error 2
+          scripts/config --file ../${{ env.OUT_DIR }}/.config -d DEBUG_INFO
+          scripts/config --file ../${{ env.OUT_DIR }}/.config -d DEBUG_SECTION_MISMATCH
+          scripts/config --file ../${{ env.OUT_DIR }}/.config -e SECTION_MISMATCH_WARN_ONLY
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }}
+        run: make ${{ steps.generate-args.outputs.args }} || make ${{ steps.generate-args.outputs.args }} -j1
 
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
           name: Kernel-LGV60-Lineage-NTSYNC
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
-          

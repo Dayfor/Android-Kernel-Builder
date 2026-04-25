@@ -51,9 +51,14 @@ jobs:
           git clone --recursive --branch ${{ env.kernelBranch }} ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1 || \
           git clone --recursive ${{ env.kernelRepo }} ${{ env.kernelName }} --depth=1
 
-      - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
+      - name: "💉 Aplicar Parche NTSYNC y Fix HID"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
+          # 1. Fix para el error 'use of undeclared identifier ABS' en hid-multitouch.c
+          echo "Aplicando fix para drivers/hid/hid-multitouch.c..."
+          sed -i 's/TOUCH_D(ABS/TOUCH_D(usage/g' drivers/hid/hid-multitouch.c
+          
+          # 2. Descargar y aplicar parche NTSYNC
           echo "Buscando parche ntsync..."
           curl -Lo ntsync.patch https://raw.githubusercontent.com/frogging-family/community-patches/master/linux419-tkg/0007-v6.7-ntsync.patch || \
           curl -Lo ntsync.patch https://raw.githubusercontent.com/Gr-some7/ntsync-patch/main/ntsync_4.19.patch
@@ -62,6 +67,7 @@ jobs:
             patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: El parche no encajó perfecto, procediendo vía defconfig."
           fi
           
+          # 3. Configuración del defconfig
           REAL_CONFIG=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1)
           if [ -n "$REAL_CONFIG" ]; then
             sed -i '/CONFIG_NTSYNC/d' "$REAL_CONFIG"
@@ -75,7 +81,6 @@ jobs:
               echo "CONFIG_ANDROID_BINDERFS=y"
             } >> "$REAL_CONFIG"
           fi
-
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
         env:

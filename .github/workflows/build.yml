@@ -15,27 +15,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up environment
+      - name: Instalar Dependencias
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld jq patch
 
-      - name: Clone Toolchains and Kernel
+      - name: ⚙️ Configurar y Clonar
         run: |
-          # Aquí el script original de Dayfor clona según el KERNEL_INDEX
-          # Se asume que el kernel queda en una carpeta llamada 'source'
-          chmod +x build.sh
+          # Damos permisos al script si existe en el repo
+          [ -f "build.sh" ] && chmod +x build.sh
+          # Ejecutamos el setup original de Dayfor
           ./build.sh --setup ${{ github.event.inputs.KERNEL_INDEX }}
 
-      - name: 🛠️ Inyectar Android 15, NTSYNC y Fixes LG
+      - name: 🛠️ Inyectar Parches (A15, NTSYNC y Fixes LG)
         run: |
-          cd source
+          # Entramos a la carpeta donde se clonó el kernel (usualmente 'source')
+          cd source || cd kernel || exit 1
           
-          # 1. Aplicar fix de variables para evitar error 'undeclared identifier'
-          echo "Aplicando fix de variables lpd_ux..."
+          # 1. Fix de variables LPD para evitar error 'undeclared identifier'
+          # Esto sincroniza el .c con el .h que editamos antes
           sed -i 's/__lpd_ux/chg->lpd_ux/g' drivers/power/supply/qcom/qpnp-smb5.c || true
 
-          # 2. Registrar el driver NTSYNC en el sistema de configuración
+          # 2. Registrar el driver NTSYNC para emulación de juegos
           cat <<EOF > ntsync.patch
           --- a/drivers/android/Kconfig
           +++ b/drivers/android/Kconfig
@@ -51,13 +52,12 @@ jobs:
            config ANDROID_BINDERFS
            	bool "Android Binder filesystem"
           EOF
-          patch -p1 < ntsync.patch || echo "Aviso: Parche NTSYNC ya aplicado."
+          patch -p1 < ntsync.patch || echo "Aviso: El parche NTSYNC podría ya estar aplicado."
 
-          # 3. Forzar requisitos de Android 15 y NTSYNC en el defconfig
-          # Buscamos el archivo defconfig dentro de arch/arm64/configs/
+          # 3. Configurar Defconfig para Android 15 y NTSYNC
           DEFCONFIG_FILE=$(find arch/arm64/configs/ -name "*lito-perf_defconfig*" | head -n 1)
           if [ -f "$DEFCONFIG_FILE" ]; then
-            echo "Optimizando $DEFCONFIG_FILE para Android 15..."
+            echo "Optimizando $DEFCONFIG_FILE..."
             {
               echo "CONFIG_NTSYNC=y"
               echo "CONFIG_ANDROID_BINDERFS=y"
@@ -66,18 +66,17 @@ jobs:
               echo "CONFIG_MEMBARRIER=y"
             } >> "$DEFCONFIG_FILE"
           fi
-
-          # 4. Relajar el compilador (Evitar Error 2 por Warnings)
+          
+          # 4. Desactivar Werror para ignorar advertencias menores de LG
           sed -i 's/-Werror//g' Makefile
 
       - name: 🚀 Compilar Kernel
         run: |
-          # Ejecuta el script de compilación del repositorio
+          # Usamos el comando de compilación del script de Dayfor
           ./build.sh --build ${{ github.event.inputs.KERNEL_INDEX }}
 
-      - name: Upload Kernel
+      - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
           name: Kernel-V60-A15-NTSYNC
           path: out/arch/arm64/boot/Image.gz-dtb
-          

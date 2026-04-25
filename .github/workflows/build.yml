@@ -1,4 +1,4 @@
-name: "Kernel Build: LG V60 NTSYNC"
+name: "Kernel Build: LG V60 NTSYNC (Lineage 21.0)"
 
 env:
   CONFIGURATION: "repos.json"
@@ -35,70 +35,17 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu libssl-dev jq patch
+          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu libssl-dev jq patch libncurses5-dev
 
       - name: "🌟 Clone Source"
         run: |
-          git clone --branch ${{ matrix.repos.kernelSource.branch }} ${{ matrix.repos.kernelSource.repo }} kernel_source --depth=1
+          git clone --branch lineage-21.0 https://github.com/Dayfor/kernel_lge_sm8250 kernel_source --depth=1
 
-      - name: "🛠️ Inyectar NTSYNC (Modo Seguro)"
+      - name: "🛠️ Inyectar NTSYNC (Base64 Safe)"
         working-directory: ./kernel_source
         run: |
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
 
-          # Inyectar Header vía Base64
-          echo "I2lmbmRlZiBfX0xJTlVYX05UU1lOQ19ICiNpZm5kZWYgX19MSU5VWF9OVFNZTkNfSCAjaW5jbHVkZSA8bGludXgvdHlwZXMuaD4gc3RydWN0IG50c3luY19zZW1fYXJncyB7IF9fdTMyIHNlbTsgX191MzIgY291bnQ7IH07IHN0cnVjdCBudHN5bmNfbXV0ZXhfYXJncyB7IF9fdTMyIG11dGV4OyBfX3UzMiBvd25lcjsgX191MzIgY291bnQ7IH07ICNkZWZpbmUgTlRTWU5DX0lPQ19DUkVBVEVfU0VNICAgICAgX0lPV1IoJ04nLCAweDgwLCBzdHJ1Y3QgbnRzeW5jX3NlbV9hcmdzKSAjZGVmaW5lIE5UU1lOQ19JT0NfQ1JFQVRFX01VVEVYICAgIF9JT1dSKCdOJywgMHg4MSwgc3RydWN0IG50c3luY19tdXRleF9hcmdzKSAjZGVmaW5lIE5UU1lOQ19JT0NfU0VNX1BPU1QgICAgICAgIF9JT1dSKCdOJywgMHg4MiwgX191MzIpICNkZWZpbmUgTlRTWU5DX0lPQ19NVVRFWF9VTkxPQ0sgICAgX0lPV1IoJ04nLCAweDgzLCBzdHJ1Y3QgbnRzeW5jX3NlbV9hcmdzKSAjZW5kaWY=" | base64 -d > include/uapi/linux/ntsync.h
-
-          # Inyectar Source vía Base64
-          echo "I2luY2x1ZGUgPGxpbnV4L2ZpbGUuaD4KI2luY2x1ZGUgPGxpbnV4L2ZzLmg+CiNpbmNsdWRlIDxsaW51eC9taXNjZGV2aWNlLmg+CiNpbmNsdWRlIDxsaW51eC9tb2R1bGUuaD4KI2luY2x1ZGUgPGxpbnV4L3NsYWIuaD4KI2luY2x1ZGUgPGxpbnV4L3VhY2Nlc3MuaD4KI2luY2x1ZGUgPHVhcGkvbGludXgvbnRzeW5jLmg+Ck1PRFVMRV9MSUNFTlNFKCJHUEwgdjIiKTsKTU9EVUxFX0FVVEhPUigiWmViZWRpYWggRmlndXJhIik7CnN0YXRpYyBsb25nIG50c3luY19jaGFyX2lvY3RsKHN0cnVjdCBmaWxlICpmaWxlLCB1bnNpZ25lZCBpbnQgY21kLCB1bnNpZ25lZCBsb25nIGFyZykgewogICAgc3dpdGNoIChjbWQpIHsKICAgICAgICBjYXNlIE5UU1lOQ19JT0NfQ1JFQVRFX1NFTTogcmV0dXJuIDA7CiAgICAgICAgY2FzZ  TlRTWU5DX0lPQ19DUkVBVEVfTVVURVg6IHJldHVybiAwOwogICAgICAgIGRlZmF1bHQ6IHJldHVybiAtRU5PVFRZOwogICAgfQp9CnN0YXRpYyBjb25zdCBzdHJ1Y3QgZmlsZV9vcGVyYXRpb25zIG50c3luY19mb3BzID0gewogICAgLm93bmVyID0gVEhJU19NT0RVTEUsCiAgICAudW5sb2NrZWRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5jb21wYXRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5sbHNlZWsgPSBub19sbHNlZWssCn07CnN0YXRpYyBzdHJ1Y3QgbWlzY2RldmljZSBudHN5bmNfbWlzYyA9IHsKICAgIC5taW5vciA9IE1JU0NfRFlOQU1JQ19NSU5PUiwKICAgIC5uYW1lID0gIm50c3luYyIsCiAgICAuZm9wcyA9ICZudHN5bmNfZm9wcywKfTsgc3RhdGljIGludCBfX2luaXQgbnRzeW5jX2luaXQodm9pZCkgeyByZXR1cm4gbWlzY19yZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9CnN0YXRpYyB2b2lkIF9fZXhpdCBudHN5bmNfZXhpdCh2b2lkKSB7IG1pc2NfZGVyZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9Cm1vZHVsZV9pbml0KG50c3luY19pbml0KTsgbW9kdWxlX2V4aXQobnRzeW5jX2V4aXQpOw==" | base64 -d > drivers/android/ntsync/ntsync.c
-
-          # Configurar compilación
-          echo 'obj-$(CONFIG_NTSYNC) += ntsync.o' > drivers/android/ntsync/Makefile
-          echo -e 'config NTSYNC\n\ttristate "NTSYNC support"\n\tdefault y' > drivers/android/ntsync/Kconfig
-          
-          KCONFIG_MAIN=$(find drivers/android/ -name "Kconfig" | head -n 1)
-          sed -i '/config ANDROID_BINDERFS/i source "drivers/android/ntsync/Kconfig"' "$KCONFIG_MAIN"
-          echo 'obj-$(CONFIG_NTSYNC) += ntsync/' >> drivers/android/Makefile
-
-          # Habilitar en defconfig y limpiar Werror
-          CONF_PATH="arch/arm64/configs/${{ matrix.repos.kernelSource.device }}_defconfig"
-          echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
-          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
-
-      - name: "😎 Set Args"
-        id: generate-args
-        working-directory: ./kernel_source
-        env:
-          P_JSON: ${{ toJSON(matrix.repos.params) }}
-        run: |
-          ARCH=$(echo "$P_JSON" | jq -r '.ARCH')
-          ARGS="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/../${{ env.OUT_DIR }} KCFLAGS='-Wno-error'"
-          
-          # Cargar Toolchains en el PATH
-          echo '${{ toJSON(matrix.repos.toolchains) }}' | jq -c '.[]' | while read -r tc; do
-            name=$(echo $tc | jq -r '.name')
-            repo=$(echo $tc | jq -r '.repo')
-            branch=$(echo $tc | jq -r '.branch')
-            git clone --branch "$branch" "$repo" "$name" --depth=1
-            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-          done
-
-          # Construir resto de argumentos
-          EXTRA_VARS=$(echo "$P_JSON" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"')
-          for var in $EXTRA_VARS; do
-            if [[ ! $var =~ "ARCH=" ]]; then ARGS="$ARGS $var"; fi
-          done
-          echo "args=$ARGS" >> $GITHUB_OUTPUT
-
-      - name: "👍 Build"
-        working-directory: ./kernel_source
-        run: |
-          make ${{ steps.generate-args.outputs.args }} ${{ matrix.repos.kernelSource.device }}_defconfig
-          make ${{ steps.generate-args.outputs.args }}
-
-      - name: "📤 Upload"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Kernel-NTSYNC-${{ matrix.repos.kernelSource.device }}"
-          path: ./${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
+          # Inyectar Header
+          echo "I2lmbmRlZiBfX0xJTlVYX05UU1lOQ19ICiNpZm5kZWYgX19MSU5VWF9OVFNZTkNfSCAjaW5jbHVkZSA8bGludXgvdHlwZXMuaD4gc3RydWN0IG50c3luY19zZW1fYXJncyB7IF9fdTMyIHNlbTsgX191MzIgY291bnQ7IH07IHN0cnVjdCBudHN5bmNfbXV0ZXhfYXJncyB7IF9fdTMyIG11dGV4OyBfX3UzMiBvd25lcjsgX191MzIgY291bnQ7IH07ICNkZWZpbmUgTlRTWU5DX0lPQ19DUkVBVEVfU0VNICAgICAgX0lPV1IoJ

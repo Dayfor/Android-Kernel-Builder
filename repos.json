@@ -1,9 +1,9 @@
 [
   {
     "kernelSource": {
-      "name": "lge-sm8250",
-      "repo": "https://github.com/LineageOS/android_kernel_lge_sm8250",
-      "branch": "lineage-20",
+      "name": "kernel_lge_sm8250",
+      "repo": "https://github.com/tu_usuario/kernel_lge_sm8250",
+      "branch": "master", 
       "device": "v60"
     },
     "toolchains": [
@@ -15,11 +15,6 @@
       {
         "name": "gcc-64",
         "repo": "https://github.com/mvaisakh/gcc-arm64",
-        "branch": "gcc-master"
-      },
-      {
-        "name": "gcc-32",
-        "repo": "https://github.com/mvaisakh/gcc-arm",
         "branch": "gcc-master"
       }
     ],

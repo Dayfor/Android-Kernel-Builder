@@ -1,10 +1,10 @@
 [
   {
     "kernelSource": {
-      "name": "lgv60-nextgen",
-      "repo": "https://github.com/rofikkerneldev/lgv60nextgen_rofikkernel",
-      "branch": "11",
-      "device": "lito-perf"
+      "name": "lge-sm8250",
+      "repo": "https://github.com/LineageOS/android_kernel_lge_sm8250",
+      "branch": "lineage-21",
+      "device": "v60"
     },
     "toolchains": [
       {

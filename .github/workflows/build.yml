@@ -87,15 +87,27 @@ jobs:
       - name: "🛠️ Parches Android 15 + NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Registrar NTSYNC de forma limpia en MISC
-          sed -i '/obj-$(CONFIG_GENWQE)/a obj-$(CONFIG_NTSYNC) += ntsync.o' drivers/misc/Makefile
-          
-          # Inyectar Kconfig con formato correcto (sin tabs, solo espacios en Kconfig)
-          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
-            printf 'config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\tdefault y\n\thelp\n\t  Soporte para Proton/Wine.\n' > ntsync_config
-            sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
+          # 0. Limpiar archivos que pudieron quedar corruptos en intentos previos
+          git checkout drivers/android/Makefile
+          git checkout drivers/misc/Makefile
+          git checkout drivers/misc/Kconfig
+
+          # 1. Registrar NTSYNC en el sistema de construcción (en drivers/misc)
+          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
+            echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
           fi
           
+          # Inyectar la configuración en Kconfig de forma segura
+          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
+            sed -i '/config GENWQE/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para Proton/Wine.' drivers/misc/Kconfig
+          fi
+
+          # 2. Fix Energía SMB5 (LG V60 - Snapdragon 865)
+          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          [ -n "$SMB5_FILE" ] && sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE" && sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
+
+          # ... resto de tus parches (Optimización Defconfig, etc.)
+
       - name: "😎 Configurar Argumentos"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
@@ -125,7 +137,6 @@ jobs:
         run: |
           # Usamos comillas simples para evitar que bash rompa la cadena de flags
           make ${{ steps.generate-args.outputs.args }} KCFLAGS='-Wno-everything'
-
 
       - name: "📤 Subir Artefactos"
         uses: actions/upload-artifact@v4

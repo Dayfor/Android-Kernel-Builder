@@ -83,9 +83,9 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
-          # Aplicando tu sugerencia de LLVM integral y KCFLAGS para silenciar errores
-          args="-j$(nproc --all) ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument\""
+          # Usamos LLVM=1 para activar el ecosistema Clang/LLVM
+          args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-unused-command-line-argument\""
           
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
@@ -100,20 +100,27 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/misc/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
 
-      - name: "🛠️ Fix & Patch (Limpieza de Makefile)"
+      - name: "🛠️ Fix & Patch (ARM64, vDSO & LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Restaurar Makefile para evitar errores de sintaxis previos
-          git checkout Makefile
+          # Restaurar Makefiles para limpiar errores previos
+          git checkout Makefile arch/arm64/Makefile
           
-          # Eliminar flags incompatibles con Clang
-          sed -i 's/-fno-inline-functions-called-once//g' Makefile
-          sed -i 's/-fmerge-constants//g' Makefile
+          # 1. Limpieza profunda de flags de GCC incompatibles con Clang
+          find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
+          find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
+          find . -type f -name "Makefile*" -exec sed -i 's/-fno-asynchronous-unwind-tables//g' {} +
           
-          # Quitar Werror de todo el código para que no se detenga por warnings
+          # 2. Desactivar WERROR globalmente en todo el árbol (drivers, arch, etc.)
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
+          find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # Inyectar soporte NTSYNC y parches de LG V60
+          # 3. Parche de compatibilidad para vdso.S (alineación y notas)
+          if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
+            sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
+          fi
+          
+          # 4. Inyectar soporte NTSYNC y parches de sensores LG V60
           if ! grep -q "ntsync.o" drivers/misc/Makefile; then printf "\nobj-\$(CONFIG_NTSYNC) += ntsync.o\n" >> drivers/misc/Makefile; fi
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
@@ -130,14 +137,15 @@ jobs:
           sed -i '/CONFIG_KPROBES/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
-      - name: "🛠️ Compilación Final"
+      - name: "🛠️ Compilación Final (Modo Auto-Debug)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           # 1. Generar la configuración
-          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
+          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
           
-          # 2. Compilar con Clang/LLVM
-          make ${{ steps.generate-args.outputs.args }}
+          # 2. Compilar con Clang/LLVM. 
+          # Si falla el modo paralelo, reintenta con 1 núcleo para que el log muestre el error exacto.
+          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} || make -j1 ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4

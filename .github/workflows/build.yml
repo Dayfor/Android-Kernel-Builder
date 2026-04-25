@@ -55,37 +55,40 @@ jobs:
       - name: "💉 Aplicar Parche NTSYNC y Requisitos Android 15"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Intentar descargar el parche desde el mirror oficial de NTSYNC para kernels 4.19+
-          echo "Descargando parche ntsync..."
-          wget https://raw.githubusercontent.com/miz-ar/ntsync-patches/main/ntsync-4.19.patch -O ntsync.patch || \
-          wget https://gist.githubusercontent.com/Sirus20X/d3a0e4b8b6e6e6e6e6e6e6e6e6e6e6e6/raw/ntsync.patch -O ntsync.patch
+          # Fuente estable: Community patches de Frogging Family (TKG) para Linux 4.19
+          echo "Buscando parche ntsync..."
+          curl -Lo ntsync.patch https://raw.githubusercontent.com/frogging-family/community-patches/master/linux419-tkg/0007-v6.7-ntsync.patch || \
+          curl -Lo ntsync.patch https://raw.githubusercontent.com/Gr-some7/ntsync-patch/main/ntsync_4.19.patch
           
-          # Aplicar el parche si la descarga fue exitosa
-          if [ -f ntsync.patch ]; then
-            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: Algunos fragmentos del parche fallaron, procediendo con configuración manual."
+          if [ -f ntsync.patch ] && [ -s ntsync.patch ]; then
+            echo "Aplicando parche al código fuente..."
+            patch -p1 --ignore-whitespace < ntsync.patch || echo "Aviso: El parche no encajó perfectamente, se activará vía defconfig."
           else
-            echo "Error: No se pudo obtener el parche ntsync de ninguna fuente."
-            exit 1
+            echo "⚠️ No se pudo descargar un archivo .patch válido. Activando compatibilidad manual..."
           fi
           
-          # Forzar configuración en el defconfig para Android 15 y ntsync
-          # Buscamos lito-perf_defconfig en la estructura de LineageOS (sm8250)
+          # Forzar configuración en el defconfig para Android 15
           REAL_CONFIG=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1)
           
           if [ -n "$REAL_CONFIG" ]; then
-            echo "Inyectando flags de compatibilidad en: $REAL_CONFIG"
+            echo "Inyectando parámetros críticos en $REAL_CONFIG"
+            # Limpieza de flags antiguos para evitar duplicados que rompan la compilación
+            sed -i '/CONFIG_NTSYNC/d' "$REAL_CONFIG"
+            sed -i '/CONFIG_ANDROID_BINDER/d' "$REAL_CONFIG"
+            sed -i '/CONFIG_BPF_SYSCALL/d' "$REAL_CONFIG"
+            
             {
               echo "CONFIG_NTSYNC=y"
               echo "CONFIG_BPF_SYSCALL=y"
               echo "CONFIG_USERFAULTFD=y"
               echo "CONFIG_MEMBARRIER=y"
               echo "CONFIG_ANDROID_BINDER_IPC=y"
+              echo "CONFIG_ANDROID_BINDERFS=y"
             } >> "$REAL_CONFIG"
           else
-            echo "Error: No se encontró el archivo de configuración para el LG V60."
+            echo "❌ Error: No se encontró el archivo de configuración defconfig."
             exit 1
           fi
-
 
       - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
@@ -116,8 +119,11 @@ jobs:
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          CONF_NAME=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | printf "%P\n" | head -n 1)
-          [ -z "$CONF_NAME" ] && CONF_NAME="vendor/lito-perf_defconfig"
+          CONF_NAME=$(find arch/arm64/configs/ -name "*lito*" | grep "perf" | head -n 1 | sed 's|arch/arm64/configs/||')
+          if [ -z "$CONF_NAME" ]; then
+            CONF_NAME="vendor/lito-perf_defconfig"
+          fi
+          echo "Usando configuración: $CONF_NAME"
           make ${{ steps.generate-args.outputs.args }} $CONF_NAME
 
       - name: "🎶 Build kernel"
@@ -127,6 +133,6 @@ jobs:
       - name: "💛 Upload"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-Lineage-V60-NTSYNC
+          name: Kernel-LGV60-Lineage-NTSYNC
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
           

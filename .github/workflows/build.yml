@@ -1,232 +1,62 @@
-name: "Build kernels"
-
-env:
-  CONFIGURATION: "repos.json"
-  OUT_DIR: "out"
+name: Compilar Kernel SM8250
 
 on:
+  push:
+    branches: [ lineage-21.0, main ]
+  pull_request:
+    branches: [ lineage-21.0, main ]
   workflow_dispatch:
 
 jobs:
-  Set-repos:
-    name: "🐂 Parse repos.json"
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      repos: ${{ steps.generate-matrix.outputs.repos }}
+    container:
+      image: ubuntu:20.04
+
     steps:
-      - name: "😄 Checkout"
-        uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v3
 
-      - name: "😆 Generate Matrix"
-        id: generate-matrix
-        run: |
-          echo "repos<<EOF" >> $GITHUB_OUTPUT
-          cat  ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+    - name: Instalar dependencias
+      run: |
+        apt-get update
+        apt-get install -y build-essential libssl-dev libelf-dev bison flex
 
-  Build-Kernel:
-    name: "🐎 Build kernel"
-    runs-on: ubuntu-latest
-    needs:
-      - Set-repos
-    strategy:
-      max-parallel: 2
-      fail-fast: true
-      matrix:
-        repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
-    env:
-      kernelDir: ${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}
+    - name: Descargar compiladores cruzados
+      run: |
+        mkdir -p toolchains
+        cd toolchains
+        # Descargar los compiladores necesarios
+        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+/refs/heads/main/clang-r498229b.tar.gz
+        tar -xzf clang-r498229b.tar.gz
+        # Descargar compiladores ARM
+        wget https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.tar.gz
+        tar -xzf aarch64-linux-android-4.9.tar.gz
 
-      kernelName: ${{ matrix.repos.kernelSource.name }}
-      kernelRepo: ${{ matrix.repos.kernelSource.repo }}
-      kernelBranch: ${{ matrix.repos.kernelSource.branch }}
-      kernelDevice: ${{ matrix.repos.kernelSource.device }}
+    - name: Compilar Kernel
+      run: |
+        export args="-j$(nproc --all) \
+          O=./out \
+          ARCH=arm64 \
+          CROSS_COMPILE=./toolchains/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+          CROSS_COMPILE_ARM32=./toolchains/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- \
+          CC=./toolchains/clang-r498229b/bin/clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          LLVM_IAS=1"
+        
+        make ${args} vendor/timelm-perf_defconfig
+        make ${args}
 
-      DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.device }}_defconfig
+    - name: Subir artefactos
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: kernel-build
+        path: out/arch/arm64/boot/Image.gz-dtb
+        retention-days: 30
 
-      withKernelSU: ${{ matrix.repos.withKernelSU }}
-    steps:
-      - name: "✨ Create working dir"
-        run: mkdir -p $kernelDir
-
-      - name: "⭐ Install prerequisites"
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools
-          # 源码编译安装 Python2.7
-          wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
-          tar -xzf Python-2.7.18.tgz
-          cd Python-2.7.18
-          ./configure --prefix=/usr/local --enable-unicode=ucs4 --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
-          make -j$(nproc)
-          sudo make altinstall
-          # 建立软链接，确保 python2 命令可用
-          sudo ln -s /usr/local/bin/python2.7 /usr/bin/python2
-          cd ..
-          rm -rf Python-2.7.18 Python-2.7.18.tgz
-
-      - name: "🌟 Clone kernel source => (${{ env.kernelRepo }})"
-        working-directory: ./${{ env.kernelDir }}
-        run: |
-          git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
-
-      - name: "💫 Get toolchains"
-        working-directory: ./${{ env.kernelDir }}
-        env:
-          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
-        run: |
-          toolchains_num="$(echo $toolchains | jq 'length')"
-          echo $toolchains_num
-          for ((i=0;i<toolchains_num;i++)); do
-            name=$(echo $toolchains | jq -r ".[$i].name")
-            repo=$(echo $toolchains | jq -r ".[$i].repo")
-            branch=$(echo $toolchains | jq -r ".[$i].branch")
-            git clone --recursive --branch $branch $repo $name --depth=1
-            echo "$(pwd)/$name/" >> $GITHUB_PATH
-            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-          done
-
-          echo "PATH Variable: $PATH"
-          
-      - name: "🛠️ Apply NTSYNC Patches & Fixes"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          # 1. Crear estructura física de NTSYNC
-          mkdir -p drivers/android/ntsync
-          mkdir -p include/uapi/linux
-
-          # Inyectar Header y Source (Base64)
-          echo "I2lmbmRlZiBfX0xJTlVYX05UU1lOQ19ICiNpZm5kZWYgX19MSU5VWF9OVFNZTkNfSCAjaW5jbHVkZSA8bGludXgvdHlwZXMuaD4gc3RydWN0IG50c3luY19zZW1fYXJncyB7IF9fdTMyIHNlbTsgX191MzIgY291bnQ7IH07IHN0cnVjdCBudHN5bmNfbXV0ZXhfYXJncyB7IF9fdTMyIG11dGV4OyBfX3UzMiBvd25lcjsgX191MzIgY291bnQ7IH07ICNkZWZpbmUgTlRTWU5DX0lPQ19DUkVBVEVfU0VNICAgICAgX0lPV1IoJ04nLCAweDgwLCBzdHJ1Y3QgbnRzeW5jX3NlbV9hcmdzKSAjZGVmaW5lIE5UU1lOQ19JT0NfQ1JFQVRFX01VVEVYICAgIF9JT1dSKCdOJywgMHg4MSwgc3RydWN0IG50c3luY19tdXRleF9hcmdzKSAjZGVmaW5lIE5UU1lOQ19JT0NfU0VNX1BPU1QgICAgICAgIF9JT1dSKCdOJywgMHg4MiwgX191MzIpICNkZWZpbmUgTlRTWU5DX0lPQ19NVVRFWF9VTkxPQ0sgICAgX0lPV1IoJ04nLCAweDgzLCBzdHJ1Y3QgbnRzeW5jX3NlbV9hcmdzKSAjZW5kaWY=" | base64 -d > include/uapi/linux/ntsync.h
-          echo "I2luY2x1ZGUgPGxpbnV4L2ZpbGUuaD4KI2luY2x1ZGUgPGxpbnV4L2ZzLmg+CiNpbmNsdWRlIDxsaW51eC9taXNjZGV2aWNlLmg+CiNpbmNsdWRlIDxsaW51eC9tb2R1bGUuaD4KI2luY2x1ZGUgPGxpbnV4L3NsYWIuaD4KI2luY2x1ZGUgPGxpbnV4L3VhY2Nlc3MuaD4KI2luY2x1ZGUgPHVhcGkvbGludXgvbnRzeW5jLmg+Ck1PRFVMRV9MSUNFTlNFKCJHUEwgdjIiKTsKTU9EVUxFX0FVVEhPUigiWmViZWRpYWggRmlndXJhIik7CnN0YXRpYyBsb25nIG50c3luY19jaGFyX2lvY3RsKHN0cnVjdCBmaWxlICpmaWxlLCB1bnNpZ25lZCBpbnQgY21kLCB1bnNpZ25lZCBsb25nIGFyZykgewogICAgc3dpdGNoIChjbWQpIHsKICAgICAgICBjYXNlIE5UU1lOQ19JT0NfQ1JFQVRFX1NFTTogcmV0dXJuIDA7CiAgICAgICAgY2FzZ  TlRTWU5DX0lPQ19DUkVBVEVfTVVURVg6IHJldHVybiAwOwogICAgICAgIGRlZmF1bHQ6IHJldHVybiAtRU5PVFRZOwogICAgfQp9CnN0YXRpYyBjb25zdCBzdHJ1Y3QgZmlsZV9vcGVyYXRpb25zIG50c3luY19mb3BzID0gewogICAgLm93bmVyID0gVEhJU19NT0RVTEUsCiAgICAudW5sb2NrZWRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5jb21wYXRfaW9jdGwgPSBudHN5bmNfY2hhcl9pb2N0bCwKICAgIC5sbHNlZWsgPSBub19sbHNlZWssCn07CnN0YXRpYyBzdHJ1Y3QgbWlzY2RldmljZSBudHN5bmNfbWlzYyA9IHsKICAgIC5taW5vciA9IE1JU0NfRFlOQU1JQ19NSU5PUiwKICAgIC5uYW1lID0gIm50c3luYyIsCiAgICAuZm9wcyA9ICZudHN5bmNfZm9wcywKfTsgc3RhdGljIGludCBfX2luaXQgbnRzeW5jX2luaXQodm9pZCkgeyByZXR1cm4gbWlzY19yZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9CnN0YXRpYyB2b2lkIF9fZXhpdCBudHN5bmNfZXhpdCh2b2lkKSB7IG1pc2NfZGVyZWdpc3RlcigmbnRzeW5jX21pc2MpOyB9Cm1vZHVsZV9pbml0KG50c3luY19pbml0KTsgbW9kdWxlX2V4aXQobnRzeW5jX2V4aXQpOw==" | base4 -d > drivers/android/ntsync/ntsync.c
-
-          # 2. Configurar Makefile de NTSYNC
-          echo 'obj-$(CONFIG_NTSYNC) += ntsync.o' > drivers/android/ntsync/Makefile
-
-          # 3. Registrar NTSYNC en el Makefile principal de Android (ESTO ES LO QUE FALLÓ)
-          # Usamos '1i' para insertarlo en la primera línea y evitar problemas de formato
-          sed -i '1i obj-$(CONFIG_NTSYNC) += ntsync/' drivers/android/Makefile
-
-          # 4. Inyectar en Kconfig de Android
-          KCONFIG_FILE=$(find drivers/android/ -name "Kconfig" | head -n 1)
-          if ! grep -q "config NTSYNC" "$KCONFIG_FILE"; then
-            sed -i '/config ANDROID_BINDERFS/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\tdefault y\n' "$KCONFIG_FILE"
-          fi
-
-          # 5. Forzar CONFIG_NTSYNC en el defconfig
-          CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          if [ -f "$CONF_PATH" ]; then
-            echo "CONFIG_NTSYNC=y" >> "$CONF_PATH"
-          fi
-
-          # 6. Limpieza masiva de -Werror para evitar Error 2 (Indispensable)
-          find . -type f \( -name "Makefile*" -o -name "Kbuild*" \) -exec sed -i 's/-Werror//g' {} +
-          
-      - name: "😎 Set args"
-        id: generate-args
-        working-directory: ./${{ env.kernelDir }}
-        env:
-          params: "${{ toJSON(matrix.repos.params) }}"
-          THREAD: $(nproc --all)
-        run: |
-          echo "PATH Variable: $PATH"
-          ARCH=$(echo $params | jq -r ".ARCH")
-          CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE")
-          CROSS_COMPILE_COMPAT=$(echo $params | jq -r ".CROSS_COMPILE_COMPAT")
-          CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_ARM32")
-          CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")
-          AR=$(echo $params | jq -r ".AR")
-          CC=$(echo $params | jq -r ".CC")
-
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
-
-          args="-j$(nproc --all)"
-          if [ -n "${{ env.OUT_DIR }}" ]; then
-            mkdir -p $(pwd)/${{ env.OUT_DIR }}
-            args="$args O=$(pwd)/${{ env.OUT_DIR }}"
-          fi
-          if [ -n "$ARCH" ]; then
-            args="$args ARCH=$ARCH"
-          fi
-          if [ -n "$CROSS_COMPILE" ]; then
-            args="$args CROSS_COMPILE=$CROSS_COMPILE"
-          fi
-          if [ -n "$CLANG_TRIPLE" ]; then
-            args="$args CLANG_TRIPLE=$CLANG_TRIPLE"
-          fi
-          if [ -n "$CROSS_COMPILE_COMPAT" ]; then
-            args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_COMPAT"
-          fi
-          if [ -n "$AR" ]; then
-            args="$args AR=$AR"
-          fi
-          if [ -n "$CC" ]; then
-            args="$args CC=$CC"
-          fi
-          echo "args=$args" >> $GITHUB_OUTPUT
-
-      - name: "😋 Update KernelSU"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          if [ -d "./KernelSU" ]; then
-            rm -rf "./KernelSU"
-          fi
-          if [ -d "./drivers/kernelsu" ]; then
-            rm -rf "./drivers/kernelsu"
-          fi
-
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-
-          echo -e "\nCONFIG_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "\nCONFIG_HAVE_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "\nCONFIG_KPROBE_EVENTS=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-          cat ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-      - name: "👍 Make defconfig"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        env:
-          args: ${{ steps.generate-args.outputs.args }}
-        run: |
-          echo "PATH Variable: $PATH"
-          make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
-
-      - name: "🎶 Build kernel"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        env:
-          args: ${{ steps.generate-args.outputs.args }}
-        run: |
-          echo "PATH Variable: $PATH"
-          make ${args}
-
-      - name: "💛 Upload Image"
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image
-          if-no-files-found: ignore
-          expire-in: 7 days
-
-      - name: "💙 Upload Image.gz"
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image.gz(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz
-          if-no-files-found: ignore
-          expire-in: 7 days
-
-      - name: "💜 Upload dtb"
-        uses: actions/upload-artifact@v4
-        with:
-          name: dtb(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtb
-          if-no-files-found: ignore
-          expire-in: 7 days
-
-      - name: "❤️ Upload dtbo.img"
-        uses: actions/upload-artifact@v4
-        with:
-          name: dtbo.img(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtbo.img
-          if-no-files-found: ignore
-          expire-in: 7 days
+    - name: Crear Release
+      if: success() && startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: out/arch/arm64/boot/Image.gz-dtb

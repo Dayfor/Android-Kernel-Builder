@@ -87,36 +87,14 @@ jobs:
       - name: "🛠️ Parches Android 15 + NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Registrar NTSYNC en el sistema de construcción
-          if ! grep -q "ntsync.o" drivers/misc/Makefile; then
-            echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
-          fi
+          # Registrar NTSYNC de forma limpia en MISC
+          sed -i '/obj-$(CONFIG_GENWQE)/a obj-$(CONFIG_NTSYNC) += ntsync.o' drivers/misc/Makefile
+          
+          # Inyectar Kconfig con formato correcto (sin tabs, solo espacios en Kconfig)
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
-            sed -i '/config GENWQE/i config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\thelp\n\t  Soporte para Proton/Wine.' drivers/misc/Kconfig
+            printf 'config NTSYNC\n\ttristate "Windows-compatible synchronization primitives"\n\tdefault y\n\thelp\n\t  Soporte para Proton/Wine.\n' > ntsync_config
+            sed -i '/menu "Misc devices"/r ntsync_config' drivers/misc/Kconfig
           fi
-
-          # 2. Fix Energía SMB5 (LG V60)
-          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
-          [ -n "$SMB5_FILE" ] && sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE" && sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
-
-          # 3. Optimización Defconfig para Android 15
-          CONF_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          if [ -f "$CONF_PATH" ]; then
-            sed -i '/CONFIG_NTSYNC/d' "$CONF_PATH"
-            {
-              echo "CONFIG_NTSYNC=y"
-              echo "CONFIG_BPF=y"
-              echo "CONFIG_BPF_SYSCALL=y"
-              echo "CONFIG_NET_CLS_BPF=y"
-              echo "CONFIG_NET_ACT_BPF=y"
-              echo "CONFIG_BPF_JIT=y"
-            } >> "$CONF_PATH"
-            # Android 15 rinde mejor sin RT_GROUP_SCHED
-            sed -i 's/CONFIG_RT_GROUP_SCHED=y/CONFIG_RT_GROUP_SCHED=n/g' "$CONF_PATH"
-          fi
-
-          # 4. Quitar -Werror
-          find . -name "Makefile*" -o -name "Kbuild*" | xargs sed -i 's/-Werror//g'
 
       - name: "🔧 Fix Sintaxis Makefile (Python)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"

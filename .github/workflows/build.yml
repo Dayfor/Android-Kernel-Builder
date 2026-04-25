@@ -142,10 +142,10 @@ jobs:
       - name: "🎶 Compilar Kernel"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          make ${{ steps.generate-args.outputs.args }} KCFLAGS='-Wno-everything'
-
-      - name: "📤 Subir Artefactos"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Kernel-NTSYNC-A15-${{ env.kernelDevice }}-${{ env.kernelBranch }}"
-          path: "./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb"
+          # Limpiamos CFLAGS que puedan venir corruptas del entorno
+          export KCFLAGS="-Wno-everything"
+          export KBUILD_CFLAGS_KERNEL="-Wno-everything"
+          export KBUILD_CFLAGS="-Wno-everything"
+          
+          # Ejecutamos make protegiendo los argumentos con comillas
+          make ${{ steps.generate-args.outputs.args }} KCFLAGS="$KCFLAGS"

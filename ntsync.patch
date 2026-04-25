@@ -1,10 +1,23 @@
-#!/bin/bash
-# Descargar y aplicar parches de ntsync
-wget https://raw.githubusercontent.com/Project-Vortex/android_kernel_patches/main/ntsync/ntsync.patch
-patch -p1 < ntsync.patch
-
-# Asegurar compatibilidad con Android 15 (eBPF y Membarrier)
-sed -i 's/# CONFIG_BPF_SYSCALL is not set/CONFIG_BPF_SYSCALL=y/' arch/arm64/configs/vendor/lito-perf_defconfig
-echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/vendor/lito-perf_defconfig
-echo "CONFIG_USERFAULTFD=y" >> arch/arm64/configs/vendor/lito-perf_defconfig
-
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -500,6 +500,16 @@
+ 	  If you are not sure, say N here.
+ 
++config NTSYNC
++	tristate "Windows-compatible synchronization primitives"
++	depends on HAS_IOMEM
++	help
++	  This driver provides support for synchronization primitives 
++	  compatible with the Windows NT kernel, such as mutexes, 
++	  semaphores, and events. It is primarily used to improve 
++	  performance in Wine/Proton.
++
+ source "drivers/misc/c2port/Kconfig"
+ source "drivers/misc/eeprom/Kconfig"
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -57,4 +57,5 @@
+ obj-$(CONFIG_GENWQE)		+= genwqe/
+ obj-$(CONFIG_ECHO)		+= echo/
+ obj-$(CONFIG_VME_BUS)		+= vme/
++obj-$(CONFIG_NTSYNC)		+= ntsync.o

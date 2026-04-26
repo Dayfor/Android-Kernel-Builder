@@ -3,7 +3,7 @@ name: "Build kernels #116"
 env:
   CONFIGURATION: "repos.json"
   OUT_DIR: "out"
-  # Soluciona la advertencia de depreciación de Node.js 20
+  # Elimina advertencias de depreciación de GitHub
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
@@ -53,7 +53,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch libarchive-tools
-          # Instalación limpia de Python 2.7 para compatibilidad de scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -65,17 +64,18 @@ jobs:
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Get toolchains"
+      - name: "💫 Get toolchains (Anti-Error 128)"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
+          export GIT_TERMINAL_PROMPT=0
           toolchains_num=$(echo "$toolchains" | jq 'length')
           for ((i=0;i<toolchains_num;i++)); do
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1
+            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1 || true
             [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
@@ -87,9 +87,7 @@ jobs:
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
           args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
-          # KCFLAGS preventivos para Clang
           args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-unused-command-line-argument\""
-          
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
@@ -99,7 +97,6 @@ jobs:
       - name: "📥 Nuclear Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Eliminar cualquier rastro previo de ntsync que cause conflictos de redefinición
           find . -name "*ntsync*" -delete
           find . -name "Makefile" -exec sed -i '/ntsync/d' {} +
           mkdir -p drivers/android/ntsync
@@ -127,30 +124,20 @@ jobs:
       - name: "🛠️ SMB5 Precision Fix & Makefile Clean"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Limpieza de flags globales para evitar errores estrictos de Clang
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
-          
-          # 2. Fix VDSO (Error de alineación común en kernels antiguos con Clang nuevo)
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
-
-          # 3. SMB5 PRECISION PATCH
-          # Este bloque soluciona el error de "expected expression" y "#endif without #if"
+          
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             git checkout "$SMB5_FILE" || true
-            
-            # Desactivar macro de humedad de forma segura (Preprocesador)
+            # Fix preprocesador LG
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
-
-            # Comentar las variables inexistentes que rompen la compilación
+            # Comentar variables huérfanas
             sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->uusb_moisture_protection_enabled =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->lpd_disabled =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->lpd_disabled ||/\/\/ /g' "$SMB5_FILE"
-            
-            # Eliminar la línea huérfana específica detectada en la build #115
-            sed -i '/Este es el #endif original/d' "$SMB5_FILE"
           fi
 
       - name: "😋 Update KernelSU"
@@ -159,16 +146,12 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
           CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          # Asegurar que KPROBES esté habilitado para KernelSU
           sed -i '/CONFIG_KPROBES/d' "$CONF"
-          sed -i '/CONFIG_HAVE_KPROBES/d' "$CONF"
-          sed -i '/CONFIG_KPROBE_EVENTS/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
       - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Primer intento con multihilo, segundo intento con j1 si falla para ver errores claros
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} || make -j1 ${{ steps.generate-args.outputs.args }}
 
@@ -178,5 +161,4 @@ jobs:
           name: "Kernel-${{ env.kernelDevice }}-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtb*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

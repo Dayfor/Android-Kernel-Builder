@@ -92,17 +92,23 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Re-create Clean NTSYNC"
+      - name: "📥 Nuclear Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Crear carpeta limpia
+          # 1. Borrar cualquier archivo ntsync viejo que ande por ahí
+          find . -name "*ntsync*" -delete
+          
+          # 2. Limpiar Makefiles de referencias antiguas (fundamental para evitar que compile en drivers/misc)
+          find . -name "Makefile" -exec sed -i '/ntsync/d' {} +
+          
+          # 3. Crear carpeta limpia para el esqueleto
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
           
-          # Header de la API
+          # 4. Header de la API (necesario para el enlazado)
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
           
-          # Inyectar esqueleto compatible
+          # 5. Inyectar esqueleto compatible con 4.19
           cat <<EOF > drivers/android/ntsync/ntsync.c
           #include <linux/file.h>
           #include <linux/fs.h>
@@ -130,24 +136,20 @@ jobs:
           MODULE_LICENSE("GPL v2");
           EOF
 
-          # Makefile local
+          # 6. Registrar limpiamente solo en drivers/android
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
-
-          # Vincular en el árbol de Android
-          if ! grep -q "ntsync" drivers/android/Makefile; then
-            echo "obj-y += ntsync/" >> drivers/android/Makefile
-          fi
+          echo "obj-y += ntsync/" >> drivers/android/Makefile
 
       - name: "🛠️ Fix & Patch (Clang, HID & LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # 1. Limpieza de flags Clang
+          # 1. Limpieza de flags Clang incompatibles
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
           
-          # 2. Desactivar WERROR
+          # 2. Desactivar WERROR globalmente
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
@@ -157,7 +159,7 @@ jobs:
             sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
           fi
           
-          # 4. Parche vdso.S
+          # 4. Parche vdso.S (Alineación Clang)
           if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
             sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           fi

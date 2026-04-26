@@ -83,7 +83,7 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
-          # Usamos LLVM=1 para activar el ecosistema Clang/LLVM
+          # Forzamos el uso de LLVM y el set de herramientas de Google
           args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
           args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-unused-command-line-argument\""
           
@@ -93,33 +93,30 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Inject & Patch NTSYNC (Kernel 4.19 Compatibility)"
+      - name: "📥 Inject & Patch NTSYNC (Backport 4.19)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
           
-          # Descargamos los archivos
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/drivers/misc/ntsync.c" -o drivers/android/ntsync/ntsync.c
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
           
-          # --- PARCHES DE COMPATIBILIDAD PARA KERNEL 4.19 ---
+          # PARCHES DE COMPATIBILIDAD (Solución a errores de la Build #98)
+          # 1. Corregir kzalloc para que acepte los 2 argumentos de Kernel 4.19
+          sed -i 's/kzalloc(\*obj)/kzalloc(sizeof(*obj), GFP_KERNEL)/g' drivers/android/ntsync/ntsync.c
+          sed -i 's/kzalloc(\*dev)/kzalloc(sizeof(*dev), GFP_KERNEL)/g' drivers/android/ntsync/ntsync.c
           
-          # 1. Reemplazar LOCK_STATE_NOT_HELD (No existe en 4.19) por 0
+          # 2. Reemplazar constantes inexistentes y funciones modernas
           sed -i 's/LOCK_STATE_NOT_HELD/0/g' drivers/android/ntsync/ntsync.c
-          
-          # 2. Reemplazar compat_ptr_ioctl por una implementación manual o anularla
-          # En 4.19 a menudo se usa simplemente la función original o NULL si no es crítica
           sed -i 's/compat_ptr_ioctl/NULL/g' drivers/android/ntsync/ntsync.c
           
-          # 3. Arreglar el error de kzalloc_obj
-          sed -i 's/kzalloc_obj/kzalloc/g' drivers/android/ntsync/ntsync.c
+          # 3. Eliminar bloques FD_PREPARE que el compilador no entiende en 4.19
+          sed -i '/FD_PREPARE/,/);/d' drivers/android/ntsync/ntsync.c
+          sed -i 's/obj->file = fd_prepare_file(fdf);/obj->file = NULL;/g' drivers/android/ntsync/ntsync.c
+          sed -i 's/fdf.err/0/g' drivers/android/ntsync/ntsync.c
           
-          # 4. Solución para FD_PREPARE (usamos el método antiguo de 4.19)
-          # Este es un parche más agresivo para saltar la macro moderna
-          sed -i 's/FD_PREPARE/int /g' drivers/android/ntsync/ntsync.c
-          
-          # 5. Crear el Makefile para el driver
+          # 4. Crear Makefile para el módulo
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
 
       - name: "🛠️ Fix & Patch (ARM64, vDSO & LG V60)"
@@ -127,19 +124,26 @@ jobs:
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # Limpieza de flags
+          # 1. Limpieza de flags incompatibles en todo el árbol
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
+          find . -type f -name "Makefile*" -exec sed -i 's/-fno-asynchronous-unwind-tables//g' {} +
           
-          # Desactivar WERROR
+          # 2. Desactivar WERROR globalmente
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
+          find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # Inyectar NTSYNC en el sistema de drivers principal
+          # 3. Parche vdso.S (alineación para Clang)
+          if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
+            sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
+          fi
+          
+          # 4. Inyectar NTSYNC en el Makefile de Android
           if ! grep -q "ntsync" drivers/android/Makefile; then
             echo "obj-y += ntsync/" >> drivers/android/Makefile
           fi
           
-          # Parches LG V60 SMB5
+          # 5. Fix Sensores LG V60 (SMB5)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
@@ -161,8 +165,7 @@ jobs:
           # 1. Generar la configuración
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
           
-          # 2. Compilar con Clang/LLVM. 
-          # Si falla el modo paralelo, reintenta con 1 núcleo para que el log muestre el error exacto.
+          # 2. Compilar (Si falla el modo paralelo, reintenta con 1 núcleo para ver el error real)
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} || make -j1 ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"

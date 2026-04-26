@@ -92,13 +92,17 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Inject NTSYNC (Force 4.19 Skeleton)"
+      - name: "📥 Re-create Clean NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
+          # Crear carpeta limpia
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
+          
+          # Header de la API
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
           
+          # Inyectar esqueleto compatible
           cat <<EOF > drivers/android/ntsync/ntsync.c
           #include <linux/file.h>
           #include <linux/fs.h>
@@ -126,19 +130,24 @@ jobs:
           MODULE_LICENSE("GPL v2");
           EOF
 
+          # Makefile local
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
+
+          # Vincular en el árbol de Android
+          if ! grep -q "ntsync" drivers/android/Makefile; then
+            echo "obj-y += ntsync/" >> drivers/android/Makefile
+          fi
 
       - name: "🛠️ Fix & Patch (Clang, HID & LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # 1. Limpieza de flags incompatibles para Clang
+          # 1. Limpieza de flags Clang
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
-          find . -type f -name "Makefile*" -exec sed -i 's/-fno-asynchronous-unwind-tables//g' {} +
           
-          # 2. Desactivar WERROR globalmente
+          # 2. Desactivar WERROR
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
@@ -148,17 +157,12 @@ jobs:
             sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
           fi
           
-          # 4. Parche vdso.S (Alineación para Clang)
+          # 4. Parche vdso.S
           if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
             sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           fi
           
-          # 5. Inyectar NTSYNC en el Makefile de Android
-          if ! grep -q "ntsync" drivers/android/Makefile; then
-            echo "obj-y += ntsync/" >> drivers/android/Makefile
-          fi
-          
-          # 6. Fix Sensores LG V60 (SMB5)
+          # 5. Fix Sensores LG V60 (SMB5)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"

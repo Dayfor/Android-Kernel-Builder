@@ -97,11 +97,8 @@ jobs:
         run: |
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
-          
-          # Descargamos el header original para mantener definiciones de IOCTL
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
           
-          # Sobrescribimos el .c con un esqueleto compatible que no rompa la compilación
           cat <<EOF > drivers/android/ntsync/ntsync.c
           #include <linux/file.h>
           #include <linux/fs.h>
@@ -131,31 +128,38 @@ jobs:
 
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
 
-      - name: "🛠️ Fix & Patch (ARM64, vDSO & LG V60)"
+      - name: "🛠️ Fix & Patch (ARM64, ESOC & LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # Limpieza de flags incompatibles
+          # 1. Limpieza de flags incompatibles
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-asynchronous-unwind-tables//g' {} +
           
-          # Desactivar WERROR globalmente
+          # 2. Desactivar WERROR globalmente
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # Parche vdso.S (Clang alignment)
+          # 3. FIX ESOC (Error "while loop outside of a function")
+          ESOC_H="drivers/esoc/esoc.h"
+          if [ -f "$ESOC_H" ]; then
+            sed -i 's/^do {/\/* do {/g' "$ESOC_H"
+            sed -i 's/^} while (0)$/ } while (0) *\//g' "$ESOC_H"
+          fi
+          
+          # 4. Parche vdso.S (Clang alignment)
           if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
             sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           fi
           
-          # Inyectar NTSYNC en el árbol
+          # 5. Inyectar NTSYNC en el Makefile de Android
           if ! grep -q "ntsync" drivers/android/Makefile; then
             echo "obj-y += ntsync/" >> drivers/android/Makefile
           fi
           
-          # Fix Sensores LG V60 (SMB5)
+          # 6. Fix Sensores LG V60 (SMB5)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
@@ -171,7 +175,7 @@ jobs:
           sed -i '/CONFIG_KPROBES/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
-      - name: "🛠️ Compilación Final (Modo Auto-Debug)"
+      - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}

@@ -52,7 +52,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch libarchive-tools
-          # Node 24 support is handled by the env variable above
 
       - name: "🌟 Clone kernel source"
         working-directory: "./${{ env.kernelDir }}"
@@ -68,7 +67,7 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1
+            git clone --depth=1 -b "$branch" "$repo" "$name"
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
@@ -79,8 +78,8 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
-          args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
-          # Mantenemos los flags para evitar errores por advertencias de Clang
+          # HOSTCC=gcc previene errores de libc al compilar herramientas del sistema local
+          args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
           args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-unused-command-line-argument -Wno-incompatible-function-pointer-types\""
           
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
@@ -89,21 +88,11 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Clean & Prep NTSYNC"
+      - name: "🛠️ Fix & Patch"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # En kernels NextGen, ntsync suele estar mejor integrado o no ser necesario inyectarlo así.
-          # He simplificado esto para evitar el error de "incompatible pointer conversion"
-          echo "Preparando drivers/android..."
-
-      - name: "🛠️ Fix & Patch (Clang & Modern Kernels)"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          # Eliminamos -Werror de todos los Makefiles para que Clang no detenga la build
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
-          
-          # Fix para alineación en VDSO si existe
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
 
       - name: "😋 Update KernelSU"
@@ -111,7 +100,6 @@ jobs:
         if: ${{ env.withKernelSU == 'true' }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-          # El defconfig en este repo está en vendor/
           CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           if [ -f "$CONF" ]; then
             sed -i '/CONFIG_KPROBES/d' "$CONF"
@@ -120,12 +108,10 @@ jobs:
             echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
           fi
 
-      - name: "🛠️ Compilación Final"
+      - name: "🛠️ Compilación"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Primero el defconfig
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-          # Luego la compilación
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"

@@ -119,7 +119,7 @@ jobs:
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Final Clean)"
+      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Absolute Restoration)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
@@ -135,18 +135,15 @@ jobs:
           HID_MT="drivers/hid/hid-multitouch.c"
           [ -f "$HID_MT" ] && sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
 
-          # 3. FIX QPNP-SMB5 (Eliminar rastros de LPD manualmente)
+          # 3. FIX QPNP-SMB5 (RESTAURACIÓN Y PARCHE SEGURO)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
+            # PASO CRUCIAL: Volvemos al estado original para limpiar desastres previos
             git checkout "$SMB5_FILE" || true
             
-            # Borramos los #endif huérfanos que están rompiendo la build
-            sed -i '/#endif \/\* Este es el #endif original/d' "$SMB5_FILE"
-            sed -i '/#endif \/\* Este cierra el "#if 0"/d' "$SMB5_FILE"
-            
-            # Desactivamos la macro original
-            sed -i 's/CONFIG_LGE_USB_MOISTURE_DETECTION/DISABLED_LPD_FEATURE/g' "$SMB5_FILE"
-            
+            # Desactivamos el bloque de humedad de LG sin romper la estructura del preprocesador
+            sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
+
             # Comentamos referencias para evitar errores de variables no declaradas
             sed -i '/__lpd_disabled/s/^/\/\/ /' "$SMB5_FILE"
             sed -i '/__lpd_ux/s/^/\/\/ /' "$SMB5_FILE"

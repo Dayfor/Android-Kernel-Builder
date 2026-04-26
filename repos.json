@@ -1,17 +1,16 @@
-
 [
   {
     "kernelSource": {
       "name": "kernel_lge_sm8250",
-      "repo": "https://github.com/rofikkerneldev/lgv60nextgen_rofikkernel",
-      "branch": "lineage-23.0",
-      "device": "timelm"
+      "repo": "https://github.com/Dayfor/kernel_lge_sm8250",
+      "branch": "lineage-21.0",
+      "device": "v60"
     },
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://github.com/ZyCromerZ/Clang",
-        "branch": "14"
+        "repo": "https://gitlab.com/Prebuilt-Toolchains/toolchains.git",
+        "branch": "master"
       }
     ],
     "params": {

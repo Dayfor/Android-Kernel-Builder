@@ -95,16 +95,11 @@ jobs:
       - name: "📥 Nuclear Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Limpieza total de ntsync
           find . -name "*ntsync*" -delete
           find . -name "Makefile" -exec sed -i '/ntsync/d' {} +
-          
-          # Crear estructura nueva
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
-          
-          # Esqueleto compatible
           cat <<EOF > drivers/android/ntsync/ntsync.c
           #include <linux/file.h>
           #include <linux/fs.h>
@@ -121,32 +116,51 @@ jobs:
           module_exit(ntsync_exit);
           MODULE_LICENSE("GPL v2");
           EOF
-
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ Fix & Patch (Clang, HID & VDSO)"
+      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Nuclear)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # 1. Limpieza de flags Clang
+          # Limpieza de flags y WERROR
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
-          
-          # 2. Desactivar WERROR globalmente
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # 3. FIX HID-MULTITOUCH
+          # Fix VDSO y HID
+          [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           HID_MT="drivers/hid/hid-multitouch.c"
-          if [ -f "$HID_MT" ]; then
-            sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
-          fi
-          
-          # 4. Parche vdso.S (Alineación Clang)
-          if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
-            sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
+          [ -f "$HID_MT" ] && sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
+
+          # SOLUCIÓN NUCLEAR QPNP-SMB5
+          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
+          if [ -n "$SMB5_FILE" ]; then
+            # Revertimos cualquier cambio manual para empezar de cero
+            git checkout "$SMB5_FILE" || true
+            
+            # Desactivamos la macro de LG
+            sed -i 's/CONFIG_LGE_USB_MOISTURE_DETECTION/DISABLED_LPD_FEATURE/g' "$SMB5_FILE"
+            
+            # Comentamos TODAS las referencias problemáticas del log anterior
+            sed -i '/__lpd_disabled/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/__lpd_ux/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/__lpd_dpdm_disable/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/__lpd_apsd_disable/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/__lpd_threshold/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/__lpd_floating/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/__check_factory_lpd/s/^/\/\/ /' "$SMB5_FILE"
+            
+            # Limpieza de asignaciones en estructuras
+            sed -i 's/chg->lge_lpd_disabled =/\/\/ /' "$SMB5_FILE"
+            sed -i 's/chg->lpd_ux =/\/\/ /' "$SMB5_FILE"
+            sed -i 's/chg->lpd_dpdm_disable =/\/\/ /' "$SMB5_FILE"
+            sed -i 's/chg->lpd_apsd_disable =/\/\/ /' "$SMB5_FILE"
+            sed -i 's/chg->lpd_threshold =/\/\/ /' "$SMB5_FILE"
+            sed -i 's/chg->lpd_floating =/\/\/ /' "$SMB5_FILE"
+            sed -i 's/chg->check_factory_lpd =/\/\/ /' "$SMB5_FILE"
           fi
 
       - name: "😋 Update KernelSU"

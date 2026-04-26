@@ -119,32 +119,35 @@ jobs:
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Nuclear)"
+      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Final Clean)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # Limpieza de flags y WERROR
+          # 1. Limpieza de flags y WERROR
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # Fix VDSO y HID
+          # 2. Fix VDSO y HID
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           HID_MT="drivers/hid/hid-multitouch.c"
           [ -f "$HID_MT" ] && sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
 
-          # SOLUCIÓN NUCLEAR QPNP-SMB5
+          # 3. FIX QPNP-SMB5 (Eliminar rastros de LPD manualmente)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
-            # Revertimos cualquier cambio manual para empezar de cero
             git checkout "$SMB5_FILE" || true
             
-            # Desactivamos la macro de LG
+            # Borramos los #endif huérfanos que están rompiendo la build
+            sed -i '/#endif \/\* Este es el #endif original/d' "$SMB5_FILE"
+            sed -i '/#endif \/\* Este cierra el "#if 0"/d' "$SMB5_FILE"
+            
+            # Desactivamos la macro original
             sed -i 's/CONFIG_LGE_USB_MOISTURE_DETECTION/DISABLED_LPD_FEATURE/g' "$SMB5_FILE"
             
-            # Comentamos TODAS las referencias problemáticas del log anterior
+            # Comentamos referencias para evitar errores de variables no declaradas
             sed -i '/__lpd_disabled/s/^/\/\/ /' "$SMB5_FILE"
             sed -i '/__lpd_ux/s/^/\/\/ /' "$SMB5_FILE"
             sed -i '/__lpd_dpdm_disable/s/^/\/\/ /' "$SMB5_FILE"
@@ -153,7 +156,7 @@ jobs:
             sed -i '/__lpd_floating/s/^/\/\/ /' "$SMB5_FILE"
             sed -i '/__check_factory_lpd/s/^/\/\/ /' "$SMB5_FILE"
             
-            # Limpieza de asignaciones en estructuras
+            # Comentamos asignaciones en estructuras
             sed -i 's/chg->lge_lpd_disabled =/\/\/ /' "$SMB5_FILE"
             sed -i 's/chg->lpd_ux =/\/\/ /' "$SMB5_FILE"
             sed -i 's/chg->lpd_dpdm_disable =/\/\/ /' "$SMB5_FILE"

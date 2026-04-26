@@ -95,20 +95,12 @@ jobs:
       - name: "📥 Nuclear Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Borrar cualquier archivo ntsync viejo que ande por ahí
           find . -name "*ntsync*" -delete
-          
-          # 2. Limpiar Makefiles de referencias antiguas (fundamental para evitar que compile en drivers/misc)
           find . -name "Makefile" -exec sed -i '/ntsync/d' {} +
-          
-          # 3. Crear carpeta limpia para el esqueleto
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
-          
-          # 4. Header de la API (necesario para el enlazado)
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
           
-          # 5. Inyectar esqueleto compatible con 4.19
           cat <<EOF > drivers/android/ntsync/ntsync.c
           #include <linux/file.h>
           #include <linux/fs.h>
@@ -117,26 +109,15 @@ jobs:
           #include <linux/slab.h>
           #include <linux/uaccess.h>
           #include <uapi/linux/ntsync.h>
-
-          static long ntsync_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
-              return -ENOTTY;
-          }
-
-          static const struct file_operations ntsync_device_fops = {
-              .owner          = THIS_MODULE,
-              .unlocked_ioctl = ntsync_char_ioctl,
-              .compat_ioctl   = NULL,
-          };
-
+          static long ntsync_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg) { return -ENOTTY; }
+          static const struct file_operations ntsync_device_fops = { .owner = THIS_MODULE, .unlocked_ioctl = ntsync_char_ioctl, .compat_ioctl = NULL, };
           int ntsync_init(void) { return 0; }
           void ntsync_exit(void) { }
-
           module_init(ntsync_init);
           module_exit(ntsync_exit);
           MODULE_LICENSE("GPL v2");
           EOF
 
-          # 6. Registrar limpiamente solo en drivers/android
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
@@ -145,11 +126,11 @@ jobs:
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # 1. Limpieza de flags Clang incompatibles
+          # 1. Limpieza de flags Clang
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
           
-          # 2. Desactivar WERROR globalmente
+          # 2. Desactivar WERROR
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
@@ -159,16 +140,21 @@ jobs:
             sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
           fi
           
-          # 4. Parche vdso.S (Alineación Clang)
+          # 4. Parche vdso.S
           if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
             sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           fi
           
-          # 5. Fix Sensores LG V60 (SMB5)
+          # 5. FIX SENSORES LG V60 (qpnp-smb5.c) - LIMPIEZA QUIRÚRGICA
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
-            sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"
-            sed -i 's/__lpd_disabled_global/chg->lpd_disabled_global/g' "$SMB5_FILE"
+            # Revertir cualquier desastre de la build anterior
+            git checkout "$SMB5_FILE" || true
+            # Comentar las líneas de parámetros que rompen la compilación
+            sed -i 's/static int lpd_ux/ \/\/ static int lpd_ux/g' "$SMB5_FILE"
+            sed -i 's/static int lpd_disabled_global/ \/\/ static int lpd_disabled_global/g' "$SMB5_FILE"
+            sed -i 's/module_param_named(lpd_ux/ \/\/ module_param_named(lpd_ux/g' "$SMB5_FILE"
+            sed -i 's/module_param_named(lpd_disabled_global/ \/\/ module_param_named(lpd_disabled_global/g' "$SMB5_FILE"
           fi
 
       - name: "😋 Update KernelSU"

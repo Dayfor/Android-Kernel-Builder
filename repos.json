@@ -13,12 +13,12 @@
         "branch": "main"
       },
       {
-        "name": "gcc-arm64",
+        "name": "gcc64",
         "repo": "https://github.com/mvaisakh/gcc-arm64",
         "branch": "gcc-master"
       },
       {
-        "name": "gcc-arm",
+        "name": "gcc32",
         "repo": "https://github.com/mvaisakh/gcc-arm",
         "branch": "gcc-master"
       }
@@ -30,9 +30,9 @@
       "OBJCOPY": "llvm-objcopy",
       "OBJDUMP": "llvm-objdump",
       "STRIP": "llvm-strip",
+      "CLANG_TRIPLE": "aarch64-linux-gnu-",
       "CROSS_COMPILE": "aarch64-linux-gnu-",
-      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
-      "CLANG_TRIPLE": "aarch64-linux-gnu-"
+      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-"
     },
     "withKernelSU": "false"
   }

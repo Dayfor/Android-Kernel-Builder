@@ -2,25 +2,15 @@
   {
     "kernelSource": {
       "name": "kernel_lge_sm8250",
-      "repo": "https://github.com/Dayfor/kernel_lge_sm8250",
-      "branch": "lineage-21.0",
-      "device": "vendor/timelm"
+      "repo": "https://github.com/rofikkerneldev/lgv60nextgen_rofikkernel",
+      "branch": "lineage-23.0",
+      "device": "timelm"
     },
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://github.com/ZyCromerZ/Clang",
-        "branch": "17"
-      },
-      {
-        "name": "aarch64-gcc",
-        "repo": "https://github.com/mvaisakh/gcc-arm64",
-        "branch": "gcc-master"
-      },
-      {
-        "name": "arm32-gcc",
-        "repo": "https://github.com/mvaisakh/gcc-arm",
-        "branch": "gcc-master"
+        "repo": "https://github.com/kdrag0n/proton-clang",
+        "branch": "master"
       }
     ],
     "params": {
@@ -31,11 +21,8 @@
       "OBJDUMP": "llvm-objdump",
       "STRIP": "llvm-strip",
       "CROSS_COMPILE": "aarch64-linux-gnu-",
-      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
-      "CLANG_TRIPLE": "aarch64-linux-gnu-",
-      "LLVM": "1",
-      "LLVM_IAS": "1"
+      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-"
     },
-    "withKernelSU": "false"
+    "withKernelSU": "true"
   }
 ]

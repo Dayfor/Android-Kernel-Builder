@@ -142,10 +142,12 @@ jobs:
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # 3. FIX ESOC (Borrado de macro defectuosa)
+          # 3. FIX ESOC (Modo quirúrgico: desactivamos solo las macros de log problemáticas)
           ESOC_H="drivers/esoc/esoc.h"
           if [ -f "$ESOC_H" ]; then
-            sed -i '35,45d' "$ESOC_H"
+            git checkout "$ESOC_H" || true
+            sed -i 's/^#define esoc_clink_log/#define _esoc_clink_log/g' "$ESOC_H"
+            sed -i 's/^#define esoc_clink_errlog/#define _esoc_clink_errlog/g' "$ESOC_H"
           fi
           
           # 4. FIX HID-MULTITOUCH (Error Build #101)

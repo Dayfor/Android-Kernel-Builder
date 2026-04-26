@@ -4,7 +4,7 @@
       "name": "kernel_lge_sm8250",
       "repo": "https://github.com/Dayfor/kernel_lge_sm8250",
       "branch": "lineage-21.0",
-      "device": "v60"
+      "device": "timelm"
     },
     "toolchains": [
       {
@@ -16,11 +16,6 @@
         "name": "gcc64",
         "repo": "https://github.com/mvaisakh/gcc-arm64",
         "branch": "gcc-master"
-      },
-      {
-        "name": "gcc32",
-        "repo": "https://github.com/mvaisakh/gcc-arm",
-        "branch": "gcc-master"
       }
     ],
     "params": {
@@ -30,8 +25,6 @@
       "OBJCOPY": "llvm-objcopy",
       "OBJDUMP": "llvm-objdump",
       "STRIP": "llvm-strip",
-      "AR": "llvm-ar",
-      "LD": "ld.lld",
       "CLANG_TRIPLE": "aarch64-linux-gnu-",
       "CROSS_COMPILE": "aarch64-linux-gnu-",
       "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-"

@@ -77,15 +77,25 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
+          # 1. Fix para ld.lld not found (creamos un link al lld del toolchain)
+          CLANG_BIN="$(pwd)/clang/bin"
+          if [ -f "$CLANG_BIN/ld.lld" ]; then
+            sudo ln -sf "$CLANG_BIN/ld.lld" /usr/bin/ld.lld
+          fi
+
+          # 2. Configurar argumentos sin que el shell rompa las comillas
           ARCH=$(echo "$params" | jq -r ".ARCH // \"arm64\"")
-          # HOSTCC=gcc previene errores de libc al compilar herramientas del sistema local
-          args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-unused-command-line-argument -Wno-incompatible-function-pointer-types\""
+          
+          # Definimos KCFLAGS de forma limpia
+          K_FLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-return-type -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-unused-command-line-argument -Wno-incompatible-function-pointer-types"
+          
+          args="ARCH=$ARCH O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ KCFLAGS='${K_FLAGS}'"
           
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
+          
           echo "args=$args" >> $GITHUB_OUTPUT
 
       - name: "🛠️ Fix & Patch"

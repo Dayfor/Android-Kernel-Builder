@@ -92,7 +92,7 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Nuclear Clean & Inject NTSYNC"
+      - name: "📥 Inject NTSYNC (Clean)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           find . -name "*ntsync*" -delete
@@ -119,48 +119,23 @@ jobs:
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Absolute Restoration)"
+      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Safe Patch)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          git checkout Makefile arch/arm64/Makefile
-          
-          # 1. Limpieza de flags y WERROR
-          find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
-          find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
-          find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
-          find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
-          
-          # 2. Fix VDSO y HID
+          # 1. VDSO y HID Fix
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           HID_MT="drivers/hid/hid-multitouch.c"
           [ -f "$HID_MT" ] && sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
 
-          # 3. FIX QPNP-SMB5 (RESTAURACIÓN Y PARCHE SEGURO)
+          # 2. SMB5 CLEAN PATCH
+          # Como restauraste el archivo, este comando ahora funcionará perfectamente.
+          # Forzamos que la macro NUNCA se cumpla añadiendo un "0 &&"
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
-            # PASO CRUCIAL: Volvemos al estado original para limpiar desastres previos
-            git checkout "$SMB5_FILE" || true
-            
-            # Desactivamos el bloque de humedad de LG sin romper la estructura del preprocesador
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
-
-            # Comentamos referencias para evitar errores de variables no declaradas
-            sed -i '/__lpd_disabled/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/__lpd_ux/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/__lpd_dpdm_disable/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/__lpd_apsd_disable/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/__lpd_threshold/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/__lpd_floating/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/__check_factory_lpd/s/^/\/\/ /' "$SMB5_FILE"
-            
-            # Comentamos asignaciones en estructuras
-            sed -i 's/chg->lge_lpd_disabled =/\/\/ /' "$SMB5_FILE"
-            sed -i 's/chg->lpd_ux =/\/\/ /' "$SMB5_FILE"
-            sed -i 's/chg->lpd_dpdm_disable =/\/\/ /' "$SMB5_FILE"
-            sed -i 's/chg->lpd_apsd_disable =/\/\/ /' "$SMB5_FILE"
-            sed -i 's/chg->lpd_threshold =/\/\/ /' "$SMB5_FILE"
-            sed -i 's/chg->lpd_floating =/\/\/ /' "$SMB5_FILE"
-            sed -i 's/chg->check_factory_lpd =/\/\/ /' "$SMB5_FILE"
+            # Comentamos las variables problemáticas para que no den error de declaración
+            sed -i '/__lpd_/s/^/\/\/ /' "$SMB5_FILE"
+            sed -i '/lge_lpd_/s/^/\/\/ /' "$SMB5_FILE"
           fi
 
       - name: "😋 Update KernelSU"

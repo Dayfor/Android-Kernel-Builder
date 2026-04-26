@@ -3,7 +3,6 @@ name: "Build kernels #116"
 env:
   CONFIGURATION: "repos.json"
   OUT_DIR: "out"
-  # Elimina advertencias de depreciación de GitHub
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
@@ -43,7 +42,6 @@ jobs:
       kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
       kernelDevice: "${{ matrix.repos.kernelSource.device }}"
       DEFCONFIG_NAME: "${{ matrix.repos.kernelSource.device }}_defconfig"
-      withKernelSU: "${{ matrix.repos.withKernelSU }}"
       
     steps:
       - name: "✨ Create working dir"
@@ -131,23 +129,12 @@ jobs:
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             git checkout "$SMB5_FILE" || true
-            # Fix preprocesador LG
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
-            # Comentar variables huérfanas
             sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->uusb_moisture_protection_enabled =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->lpd_disabled =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->lpd_disabled ||/\/\/ /g' "$SMB5_FILE"
           fi
-
-      - name: "😋 Update KernelSU"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-          CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          sed -i '/CONFIG_KPROBES/d' "$CONF"
-          echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
       - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
@@ -162,3 +149,4 @@ jobs:
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img
+            

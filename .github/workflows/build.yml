@@ -41,21 +41,19 @@ jobs:
       kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
       kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
       kernelDevice: "${{ matrix.repos.kernelSource.device }}"
-      # Ajustado a la ruta vendor/sm8250 que mencionaste
-      DEFCONFIG_NAME: "vendor/${{ matrix.repos.kernelSource.device }}_defconfig"
       
     steps:
       - name: "✨ Create working dir"
         run: mkdir -p "${{ env.kernelDir }}"
 
-      - name: "⭐ Install Build Environment"
+      - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu \
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev
           
-          # Instalación crítica de Python 2.7 para scripts de Qualcomm (DTBO)
+          # Instalación de Python 2.7 (necesario para scripts de DTBO de Qualcomm)
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -67,7 +65,7 @@ jobs:
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Get Toolchains (Clang AOSP & GCC)"
+      - name: "💫 Get toolchains"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -79,58 +77,87 @@ jobs:
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
             git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1 || true
-            
-            # Añadir binarios al PATH
-            if [ -d "$(pwd)/$name/bin" ]; then
-              echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-            else
-              echo "$(pwd)/$name" >> $GITHUB_PATH
-            fi
+            [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "😎 Setup Compilation Arguments"
+      - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          # Activación de LLVM e Integrated Assembler (IAS) para SM8250
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
-          
-          # Inyección de KCFLAGS para omitir advertencias que rompen la build en Clang
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option\""
-          
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option -Wno-ignored-optimization-argument\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Fixes & Parches de LG"
+      - name: "📥 Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Eliminar Werror de los Makefiles
+          find . -name "*ntsync*" -delete
+          find . -name "Makefile" -exec sed -i '/ntsync/d' {} +
+          mkdir -p drivers/android/ntsync
+          mkdir -p include/uapi/linux
+          curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
+          cat <<EOF > drivers/android/ntsync/ntsync.c
+          #include <linux/file.h>
+          #include <linux/fs.h>
+          #include <linux/miscdevice.h>
+          #include <linux/module.h>
+          #include <linux/slab.h>
+          #include <linux/uaccess.h>
+          #include <uapi/linux/ntsync.h>
+          static long ntsync_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg) { return -ENOTTY; }
+          static const struct file_operations ntsync_device_fops = { .owner = THIS_MODULE, .unlocked_ioctl = ntsync_char_ioctl, .compat_ioctl = NULL, };
+          int ntsync_init(void) { return 0; }
+          void ntsync_exit(void) { }
+          module_init(ntsync_init);
+          module_exit(ntsync_exit);
+          MODULE_LICENSE("GPL v2");
+          EOF
+          echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
+          echo "obj-y += ntsync/" >> drivers/android/Makefile
+
+      - name: "🛠️ Fixes (SMB5 & VDSO)"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: |
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
+          find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
+          [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           
-          # Fix de humedad SMB5 (Drivers de LG)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
+            git checkout "$SMB5_FILE" || true
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
             sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
+            sed -i 's/chg->uusb_moisture_protection_enabled =/\/\/ /g' "$SMB5_FILE"
+            sed -i 's/chg->lpd_disabled =/\/\/ /g' "$SMB5_FILE"
+            sed -i 's/chg->lpd_disabled ||/\/\/ /g' "$SMB5_FILE"
           fi
 
-      - name: "🛠️ Compilación del Kernel"
+      - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Configurar
-          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-          # 2. Compilar
+          # Buscar el defconfig real en la estructura de LG
+          CONF_NAME="${{ matrix.repos.kernelSource.device }}_defconfig"
+          CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
+
+          if [ -z "$CONF_PATH" ]; then
+            echo "❌ ERROR: No se encontró $CONF_NAME en arch/arm64/configs/"
+            exit 1
+          fi
+
+          echo "✅ Configuración encontrada: $CONF_PATH"
+          make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
-      - name: "📤 Subir Artefactos (Image & DTBO)"
+      - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LG-V60-${{ github.run_number }}"
+          name: "Kernel-${{ env.kernelDevice }}-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

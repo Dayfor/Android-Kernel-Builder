@@ -41,7 +41,8 @@ jobs:
       kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
       kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
       kernelDevice: "${{ matrix.repos.kernelSource.device }}"
-      DEFCONFIG_NAME: "${{ matrix.repos.kernelSource.device }}_defconfig"
+      # LG usa la subcarpeta vendor para sus configs
+      DEFCONFIG_NAME: "vendor/${{ matrix.repos.kernelSource.device }}_defconfig"
       
     steps:
       - name: "✨ Create working dir"
@@ -62,7 +63,7 @@ jobs:
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Get toolchains (Anti-Error 128)"
+      - name: "💫 Get toolchains"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -92,7 +93,7 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Nuclear Clean & Inject NTSYNC"
+      - name: "📥 Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           find . -name "*ntsync*" -delete
@@ -119,7 +120,7 @@ jobs:
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ SMB5 Precision Fix & Makefile Clean"
+      - name: "🛠️ Fix SMB5 & LG Variables"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
@@ -149,4 +150,3 @@ jobs:
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img
-            

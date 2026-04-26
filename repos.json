@@ -34,6 +34,6 @@
       "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
       "CLANG_TRIPLE": "aarch64-linux-gnu-"
     },
-    "withKernelSU": "true"
+    "withKernelSU": "false"
   }
 ]

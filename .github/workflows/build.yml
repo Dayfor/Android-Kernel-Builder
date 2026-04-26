@@ -92,7 +92,7 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Inject NTSYNC (Clean)"
+      - name: "📥 Nuclear Clean & Inject NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           find . -name "*ntsync*" -delete
@@ -119,32 +119,49 @@ jobs:
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Safe Patch)"
+      - name: "🛠️ Fix & Patch (Clang, HID & SMB5 Precision Fix)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. VDSO y HID Fix
+          git checkout Makefile arch/arm64/Makefile
+          
+          # 1. Limpieza de flags
+          find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
+          find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
+          find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
+          find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
+          
+          # 2. Fix VDSO y HID
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           HID_MT="drivers/hid/hid-multitouch.c"
           [ -f "$HID_MT" ] && sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
 
-          # 2. SMB5 CLEAN PATCH
-          # Como restauraste el archivo, este comando ahora funcionará perfectamente.
-          # Forzamos que la macro NUNCA se cumpla añadiendo un "0 &&"
+          # 3. SMB5 PRECISION PATCH (Para el código original de LG)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
+            git checkout "$SMB5_FILE" || true
+            
+            # Anulamos la macro conflictiva sin romper el balance de #if/#endif
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
-            # Comentamos las variables problemáticas para que no den error de declaración
-            sed -i '/__lpd_/s/^/\/\/ /' "$SMB5_FILE"
-            sed -i '/lge_lpd_/s/^/\/\/ /' "$SMB5_FILE"
+
+            # Comentamos las variables "undeclared" que Clang no encontrará en smb5-lib.h
+            sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
+            sed -i 's/chg->uusb_moisture_protection_enabled =/\/\/ /g' "$SMB5_FILE"
+            sed -i 's/chg->lpd_disabled =/\/\/ /g' "$SMB5_FILE"
+            sed -i 's/chg->lpd_disabled ||/\/\/ /g' "$SMB5_FILE"
+            
+            # Limpiamos posibles comentarios de builds anteriores por si acaso
+            sed -i '/Este es el #endif/d' "$SMB5_FILE"
           fi
 
-      - name: "😋 Update KernelSU"
+      - name: "😋 Update KernelSU (Active)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         if: ${{ env.withKernelSU == 'true' }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
           CONF="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           sed -i '/CONFIG_KPROBES/d' "$CONF"
+          sed -i '/CONFIG_HAVE_KPROBES/d' "$CONF"
+          sed -i '/CONFIG_KPROBE_EVENTS/d' "$CONF"
           echo -e "CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y" >> "$CONF"
 
       - name: "🛠️ Compilación Final"

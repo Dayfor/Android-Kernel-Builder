@@ -128,12 +128,12 @@ jobs:
 
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
 
-      - name: "🛠️ Fix & Patch (ARM64, ESOC, HID & LG V60)"
+      - name: "🛠️ Fix & Patch (Clang, HID & LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
           
-          # 1. Limpieza de flags incompatibles
+          # 1. Limpieza de flags incompatibles para Clang
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-inline-functions-called-once//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fmerge-constants//g' {} +
           find . -type f -name "Makefile*" -exec sed -i 's/-fno-asynchronous-unwind-tables//g' {} +
@@ -142,31 +142,23 @@ jobs:
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # 3. FIX ESOC (Modo quirúrgico: desactivamos solo las macros de log problemáticas)
-          ESOC_H="drivers/esoc/esoc.h"
-          if [ -f "$ESOC_H" ]; then
-            git checkout "$ESOC_H" || true
-            sed -i 's/^#define esoc_clink_log/#define _esoc_clink_log/g' "$ESOC_H"
-            sed -i 's/^#define esoc_clink_errlog/#define _esoc_clink_errlog/g' "$ESOC_H"
-          fi
-          
-          # 4. FIX HID-MULTITOUCH (Error Build #101)
+          # 3. FIX HID-MULTITOUCH
           HID_MT="drivers/hid/hid-multitouch.c"
           if [ -f "$HID_MT" ]; then
             sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
           fi
           
-          # 5. Parche vdso.S (Clang alignment)
+          # 4. Parche vdso.S (Alineación para Clang)
           if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
             sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           fi
           
-          # 6. Inyectar NTSYNC en el Makefile de Android
+          # 5. Inyectar NTSYNC en el Makefile de Android
           if ! grep -q "ntsync" drivers/android/Makefile; then
             echo "obj-y += ntsync/" >> drivers/android/Makefile
           fi
           
-          # 7. Fix Sensores LG V60 (SMB5)
+          # 6. Fix Sensores LG V60 (SMB5)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"

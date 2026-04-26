@@ -1,4 +1,4 @@
-name: "Build kernels #116"
+name: "Build kernels #117"
 
 env:
   CONFIGURATION: "repos.json"
@@ -53,7 +53,6 @@ jobs:
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev
           
-          # Python 2.7 para scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -94,14 +93,18 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "📥 Clean & Inject NTSYNC"
+      - name: "📥 Inject NTSYNC & Fix Kconfig"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
+          # Eliminar rastro de ION problemático en staging
+          sed -i 's/source "drivers\/staging\/android\/ion\/Kconfig"//g' drivers/staging/android/Kconfig
+          
+          # Inyectar NTSYNC limpio
           find . -name "*ntsync*" -delete
-          find . -name "Makefile" -exec sed -i '/ntsync/d' {} +
           mkdir -p drivers/android/ntsync
           mkdir -p include/uapi/linux
           curl -LSs "https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/ntsync.h" -o include/uapi/linux/ntsync.h
+          
           cat <<EOF > drivers/android/ntsync/ntsync.c
           #include <linux/file.h>
           #include <linux/fs.h>
@@ -118,34 +121,26 @@ jobs:
           module_exit(ntsync_exit);
           MODULE_LICENSE("GPL v2");
           EOF
+          
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
+          sed -i '/ntsync/d' drivers/android/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
       - name: "🛠️ Fixes (ABS Error, SMB5 & VDSO)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # 1. Quitar avisos como errores
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # 2. Fix Crítico: ABS Error en hid-multitouch.c
           HID_FILE="drivers/hid/hid-multitouch.c"
-          if [ -f "$HID_FILE" ]; then
-            sed -i 's/TOUCH_D(ABS,/\/\/ TOUCH_D(ABS,/g' "$HID_FILE"
-            echo "✅ Parcheado error de ABS en $HID_FILE"
-          fi
+          [ -f "$HID_FILE" ] && sed -i 's/TOUCH_D(ABS,/\/\/ TOUCH_D(ABS,/g' "$HID_FILE"
 
-          # 3. Fix VDSO para Clang
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           
-          # 4. Parche SMB5 (Detección de humedad LG)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
             sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
-            sed -i 's/chg->uusb_moisture_protection_enabled =/\/\/ /g' "$SMB5_FILE"
-            sed -i 's/chg->lpd_disabled =/\/\/ /g' "$SMB5_FILE"
-            sed -i 's/chg->lpd_disabled ||/\/\/ /g' "$SMB5_FILE"
           fi
 
       - name: "🛠️ Compilación Final"
@@ -161,12 +156,19 @@ jobs:
 
           echo "✅ Usando: $CONF_PATH"
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
+          
+          # Modificar config en caliente para evitar el error de ION/staging
+          sed -i 's/CONFIG_ION=y/# CONFIG_ION is not set/' ../${{ env.OUT_DIR }}/.config
+          echo "CONFIG_DMABUF_HEAPS=y" >> ../${{ env.OUT_DIR }}/.config
+          echo "CONFIG_DMABUF_HEAPS_SYSTEM=y" >> ../${{ env.OUT_DIR }}/.config
+          echo "CONFIG_ANDROID_NTSYNC=y" >> ../${{ env.OUT_DIR }}/.config
+          
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LG-V60-${{ github.run_number }}"
+          name: "Kernel-LG-V60-B117-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

@@ -128,7 +128,7 @@ jobs:
 
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
 
-      - name: "🛠️ Fix & Patch (ARM64, ESOC & LG V60)"
+      - name: "🛠️ Fix & Patch (ARM64, ESOC, HID & LG V60)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           git checkout Makefile arch/arm64/Makefile
@@ -142,24 +142,29 @@ jobs:
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
           
-          # 3. FIX ESOC (Error "while loop outside of a function")
+          # 3. FIX ESOC (Borrado de macro defectuosa)
           ESOC_H="drivers/esoc/esoc.h"
           if [ -f "$ESOC_H" ]; then
-            sed -i 's/^do {/\/* do {/g' "$ESOC_H"
-            sed -i 's/^} while (0)$/ } while (0) *\//g' "$ESOC_H"
+            sed -i '35,45d' "$ESOC_H"
           fi
           
-          # 4. Parche vdso.S (Clang alignment)
+          # 4. FIX HID-MULTITOUCH (Error Build #101)
+          HID_MT="drivers/hid/hid-multitouch.c"
+          if [ -f "$HID_MT" ]; then
+            sed -i 's/TOUCH_D(ABS/\/\/ TOUCH_D(ABS/g' "$HID_MT"
+          fi
+          
+          # 5. Parche vdso.S (Clang alignment)
           if [ -f "arch/arm64/kernel/vdso/vdso.S" ]; then
             sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           fi
           
-          # 5. Inyectar NTSYNC en el Makefile de Android
+          # 6. Inyectar NTSYNC en el Makefile de Android
           if ! grep -q "ntsync" drivers/android/Makefile; then
             echo "obj-y += ntsync/" >> drivers/android/Makefile
           fi
           
-          # 6. Fix Sensores LG V60 (SMB5)
+          # 7. Fix Sensores LG V60 (SMB5)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
             sed -i 's/__lpd_ux/chg->lpd_ux/g' "$SMB5_FILE"

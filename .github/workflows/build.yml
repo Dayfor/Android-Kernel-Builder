@@ -53,7 +53,7 @@ jobs:
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev
           
-          # Instalación de Python 2.7 (necesario para scripts de DTBO de Qualcomm)
+          # Python 2.7 para scripts de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -121,16 +121,26 @@ jobs:
           echo "obj-y += ntsync.o" > drivers/android/ntsync/Makefile
           echo "obj-y += ntsync/" >> drivers/android/Makefile
 
-      - name: "🛠️ Fixes (SMB5 & VDSO)"
+      - name: "🛠️ Fixes (ABS Error, SMB5 & VDSO)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
+          # 1. Quitar avisos como errores
           find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
           find . -type f -name "Kbuild*" -exec sed -i 's/-Werror//g' {} +
+          
+          # 2. Fix Crítico: ABS Error en hid-multitouch.c
+          HID_FILE="drivers/hid/hid-multitouch.c"
+          if [ -f "$HID_FILE" ]; then
+            sed -i 's/TOUCH_D(ABS,/\/\/ TOUCH_D(ABS,/g' "$HID_FILE"
+            echo "✅ Parcheado error de ABS en $HID_FILE"
+          fi
+
+          # 3. Fix VDSO para Clang
           [ -f "arch/arm64/kernel/vdso/vdso.S" ] && sed -i 's/p2align 3/p2align 2/g' arch/arm64/kernel/vdso/vdso.S
           
+          # 4. Parche SMB5 (Detección de humedad LG)
           SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
           if [ -n "$SMB5_FILE" ]; then
-            git checkout "$SMB5_FILE" || true
             sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
             sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
             sed -i 's/chg->uusb_moisture_protection_enabled =/\/\/ /g' "$SMB5_FILE"
@@ -141,23 +151,22 @@ jobs:
       - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Buscar el defconfig real en la estructura de LG
           CONF_NAME="${{ matrix.repos.kernelSource.device }}_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
 
           if [ -z "$CONF_PATH" ]; then
-            echo "❌ ERROR: No se encontró $CONF_NAME en arch/arm64/configs/"
+            echo "❌ ERROR: No se encontró $CONF_NAME"
             exit 1
           fi
 
-          echo "✅ Configuración encontrada: $CONF_PATH"
+          echo "✅ Usando: $CONF_PATH"
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-${{ env.kernelDevice }}-${{ github.run_number }}"
+          name: "Kernel-LG-V60-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

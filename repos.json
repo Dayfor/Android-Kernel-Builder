@@ -4,7 +4,7 @@
       "name": "kernel_lge_sm8250",
       "device": "timelm",
       "repo": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
-      "branch": "14"
+      "branch": "main"
     }
   }
 ]

@@ -14,8 +14,8 @@
       },
       {
         "name": "gas",
-        "repo": "https://android.googlesource.com/platform/prebuilts/gas/linux-x86",
-        "branch": "master"
+        "repo": "https://github.com/LineageOS/android_prebuilts_gas_linux-x86",
+        "branch": "lineage-21.0"
       }
     ],
     "params": {

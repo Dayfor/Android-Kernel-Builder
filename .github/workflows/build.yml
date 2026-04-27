@@ -15,13 +15,13 @@ jobs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
     steps:
       - name: "😄 Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: "😆 Generate Matrix"
         id: generate-matrix
         run: |
           echo "repos<<EOF" >> $GITHUB_OUTPUT
-          cat ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
+          cat  ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
@@ -49,7 +49,8 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev zstd wget libfl-dev python3 libarchive-tools jq
+          # Añadidos libssl-dev y libelf-dev para solucionar el error de bio.h
+          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libelf-dev zstd wget libfl-dev python3 libarchive-tools jq
 
       - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
@@ -58,54 +59,67 @@ jobs:
 
       - name: "💫 Get toolchains & Fix PATH"
         working-directory: ./${{ env.kernelDir }}
+        env:
+          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
-          echo '${{ toJSON(matrix.repos.toolchains) }}' > toolchains.json
-          toolchains_num=$(jq 'length' toolchains.json)
-          for ((i=0; i<toolchains_num; i++)); do
-            name=$(jq -r ".[$i].name" toolchains.json)
-            repo=$(jq -r ".[$i].repo" toolchains.json)
-            branch=$(jq -r ".[$i].branch" toolchains.json)
+          toolchains_num="$(echo $toolchains | jq 'length')"
+          for ((i=0;i<toolchains_num;i++)); do
+            name=$(echo $toolchains | jq -r ".[$i].name")
+            repo=$(echo $toolchains | jq -r ".[$i].repo")
+            branch=$(echo $toolchains | jq -r ".[$i].branch")
             git clone --branch $branch $repo $name --depth=1
-            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
+            BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
+            if [ -n "$BIN_PATH" ]; then
+              echo "$BIN_PATH" >> $GITHUB_PATH
+            fi
           done
 
       - name: "😎 Set args"
         id: generate-args
         working-directory: ./${{ env.kernelDir }}
+        env:
+          params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          echo '${{ toJSON(matrix.repos.params) }}' > params.json
-          ARCH=$(jq -r ".ARCH" params.json)
+          ARCH=$(echo $params | jq -r ".ARCH")
           echo "ARCH=$ARCH" >> $GITHUB_ENV
+          # Forzamos LLVM=1 para kernels LG modernos
           args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH LLVM=1 LLVM_IAS=1"
-          args="$args CC=$(jq -r ".CC" params.json)"
-          args="$args CLANG_TRIPLE=$(jq -r ".CLANG_TRIPLE" params.json)"
-          args="$args CROSS_COMPILE=$(jq -r ".CROSS_COMPILE" params.json)"
-          args="$args CROSS_COMPILE_ARM32=$(jq -r ".CROSS_COMPILE_COMPAT" params.json)"
-          args="$args AR=$(jq -r ".AR" params.json)"
+          args="$args CC=clang CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")"
+          args="$args CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE")"
+          args="$args CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_COMPAT")"
+          args="$args AR=$(echo $params | jq -r ".AR")"
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🔧 Sync & Patch Kernel"
+      - name: "🔧 Sync boot.img & Prep Config"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          find . -type f \( -name "Makefile" -o -name "Kbuild" -o -name "*.mak" \) -exec sed -i 's/--orphan-handling=warn//g' {} + || true
-          CONF_PATH=$(find arch/arm64/configs -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
-          if [ -z "$CONF_PATH" ]; then CONF_PATH="arch/arm64/configs/defconfig"; fi
-          cp "$CONF_PATH" arch/arm64/configs/v60_defconfig
-          MY_CMDLINE="androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
-          chmod +x scripts/config
-          ./scripts/config --file arch/arm64/configs/v60_defconfig --set-str CONFIG_CMDLINE "$MY_CMDLINE"
-          ./scripts/config --file arch/arm64/configs/v60_defconfig --enable CONFIG_CMDLINE_EXTEND
+          # Buscar el defconfig (timelm o genérico)
+          SEARCH_CONF=$(find arch/arm64/configs -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
+          if [ -z "$SEARCH_CONF" ]; then
+            SEARCH_CONF="arch/arm64/configs/defconfig"
+          fi
+          
+          # Crear copia en la raíz para evitar el error 'No rule to make target'
+          cp $SEARCH_CONF arch/arm64/configs/merged_v60_defconfig
+          
+          # Inyectar los parámetros de tu boot.img
+          scripts/config --file arch/arm64/configs/merged_v60_defconfig --set-str CONFIG_CMDLINE "androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
+          scripts/config --file arch/arm64/configs/merged_v60_defconfig --enable CONFIG_CMDLINE_EXTEND
+          
+          # Patch para orphan-handling
+          sed -i 's/--orphan-handling=warn//g' scripts/Makefile.extrawarn || true
+          echo "FINAL_CONF=merged_v60_defconfig" >> $GITHUB_ENV
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} v60_defconfig
+        run: make ${{ steps.generate-args.outputs.args }} merged_v60_defconfig
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: make ${{ steps.generate-args.outputs.args }}
 
-      - name: "💛 Upload Artifacts"
+      - name: "💛 Upload Image"
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-LG-V60-timelm
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
+          name: Image-LGV60-timelm
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb

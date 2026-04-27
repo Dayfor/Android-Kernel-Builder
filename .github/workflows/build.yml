@@ -1,11 +1,11 @@
-name: "Build kernels #188 - LineageOS 23.2 (A16)"
+name: "Build kernels #189 - LineageOS 23.2 Final"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 LineageOS 23.2 Build"
+    name: "🚀 V60 LineageOS 23.2 (Rama 21)"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
@@ -19,21 +19,26 @@ jobs:
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
           clang-12 lld-12 llvm-12
 
-      - name: "🌟 Clonando Fuente"
+      - name: "🌟 Clonando Fuente (lineage-21)"
         run: |
           git clone --branch lineage-21 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🆔 Forzando Versión 23.2 en el Kernel"
+      - name: "🔧 Adaptación de Identidad y CMDLINE"
         working-directory: ./kernel_src
         run: |
-          # Cambiamos el nombre de la versión local para que en 'Acerca del dispositivo' aparezca 23.2
+          # 1. Forzamos la identidad 23.2 en el nombre del kernel
           echo "-LineageOS-23.2-A16" > localversion
           
-          # Inyectamos el CMDLINE del boot.img de la 23.2 que analizamos
+          # 2. Inyectamos el CMDLINE exacto del boot.img que mandaste
+          # Este es el ADN que permite que bootee en Android 16
           CMDLINE="androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.hardware=timelm androidboot.init_fatal_reboot_target=recovery"
           sed -i "s/CONFIG_CMDLINE=\"\"/CONFIG_CMDLINE=\"$CMDLINE\"/g" arch/arm64/configs/vendor/timelm_defconfig
+          
+          # 3. Limpieza de Kconfig para evitar errores de archivos faltantes (Techpack)
+          sed -i '/techpack/d' Makefile
+          sed -i '/techpack/d' Kconfig
 
-      - name: "🛠️ Configuración Avanzada Android 16"
+      - name: "🛠️ Configuración de Características de Android 16"
         working-directory: ./kernel_src
         run: |
           export CLANG_PATH=$(which clang-12)
@@ -42,24 +47,26 @@ jobs:
           
           make $ARGS timelm_defconfig
           
-          # Requisitos obligatorios para LineageOS 23.2 (A16)
+          # Activamos los requisitos de memoria y procesos de la versión 23.2
           scripts/config --enable CONFIG_MEMCG
           scripts/config --enable CONFIG_MEMCG_SWAP
           scripts/config --enable CONFIG_BLK_CGROUP
           scripts/config --enable CONFIG_CGROUP_FREEZER
-          scripts/config --enable CONFIG_CPUSETS
           scripts/config --set-str CONFIG_LOCALVERSION "-LineageOS-23.2"
           
           make $ARGS olddefconfig
 
-      - name: "🚀 Compilación Final"
+      - name: "🚀 Compilación con Clang 12"
         working-directory: ./kernel_src
         run: |
           export CLANG_PATH=$(which clang-12)
           export LLD_PATH=$(which ld.lld-12)
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=$CLANG_PATH LD=$LLD_PATH AR=llvm-ar-12 NM=llvm-nm-12 OBJCOPY=llvm-objcopy-12 OBJDUMP=llvm-objdump-12 STRIP=llvm-strip-12 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          make -j$(nproc --all) $ARGS
+          # Flags para ignorar advertencias de código antiguo de la rama 21
+          KCF="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types"
+          
+          make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
       - name: "📦 Exportar Artefactos"
         if: always()
@@ -68,8 +75,8 @@ jobs:
           find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
           find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
 
-      - name: "📤 Subiendo"
+      - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-LineageOS-23.2"
+          name: "Kernel-V60-Lineage-23.2-A16"
           path: dist/

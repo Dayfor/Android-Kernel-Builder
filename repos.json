@@ -9,8 +9,8 @@
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://github.com/ZyCromerZ/google-clang",
-        "branch": "clang-18"
+        "repo": "https://github.com/Panchajanya1999/azure-clang",
+        "branch": "main"
       },
       {
         "name": "gcc64",

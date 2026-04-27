@@ -1,4 +1,4 @@
-name: "Build kernels #122 - NTSYNC Build 116 Style"
+name: "Build kernels #123 - NTSYNC Export Fix"
 
 env:
   CONFIGURATION: "repos.json"
@@ -25,7 +25,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
-    name: "🐎 Build kernel (ntsync)"
+    name: "🐎 Build kernel"
     runs-on: ubuntu-latest
     needs: Set-repos
     strategy:
@@ -54,7 +54,7 @@ jobs:
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Get toolchains & Fix PATH"
+      - name: "💫 Get toolchains"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -69,25 +69,12 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Apply NTSYNC Patch (Build 116 Style)"
+      - name: "💉 Apply NTSYNC Patch"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          echo "📥 Intentando descargar parche ntsync para 4.19..."
-          # Lista de mirrors para evitar el error 404
-          URLS=(
-            "https://raw.githubusercontent.com/liyafe1997/ntsync-backport/main/ntsync-4.19.patch"
-            "https://gist.githubusercontent.com/liyafe1997/57a701d6706798150495f2d665b161e1/raw/ntsync-4.19.patch"
-          )
-          
-          for url in "${URLS[@]}"; do
-            wget -q "$url" -O ntsync.patch && break
-          done
-
+          wget -q "https://raw.githubusercontent.com/liyafe1997/ntsync-backport/main/ntsync-4.19.patch" -O ntsync.patch
           if [ -f ntsync.patch ]; then
-            echo "✅ Parche descargado. Aplicando..."
-            patch -p1 < ntsync.patch || echo "⚠️ Falló la aplicación limpia del parche, se intentará forzar."
-          else
-            echo "❌ No se pudo obtener el parche de los mirrors. Saltando paso de parcheo."
+            patch -p1 < ntsync.patch || echo "Patch already applied or failed"
           fi
 
       - name: "😎 Set args"
@@ -104,26 +91,41 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Compilación Final"
+      - name: "🛠️ Compilación y Extracción"
+        id: build
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           CONF_NAME="timelm_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
           
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
+          scripts/config --file ../${{ env.OUT_DIR }}/.config --enable NTSYNC
           
-          # Intentar activar NTSYNC solo si el parche se aplicó
-          if grep -q "CONFIG_NTSYNC" ../${{ env.OUT_DIR }}/.config || [ -f "drivers/misc/ntsync.c" ]; then
-             scripts/config --file ../${{ env.OUT_DIR }}/.config --enable NTSYNC
+          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
+          
+          # Crear carpeta dist en la raíz del espacio de trabajo
+          mkdir -p ${{ github.workspace }}/dist
+          
+          # BUSQUEDA AGRESIVA: Buscamos el archivo Image y lo movemos
+          IMAGE_FILE=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -type f | head -n 1)
+          DTBO_FILE=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -type f | head -n 1)
+          
+          if [ -n "$IMAGE_FILE" ]; then
+            cp "$IMAGE_FILE" ${{ github.workspace }}/dist/
+            echo "✅ Image copiada a dist/"
+          else
+            echo "❌ ERROR: No se encontró el archivo Image generado"
+            exit 1
           fi
           
-          echo "🚀 Compilando..."
-          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} 2>&1 | tee build_log.txt || (tail -n 150 build_log.txt && exit 1)
+          if [ -n "$DTBO_FILE" ]; then
+            cp "$DTBO_FILE" ${{ github.workspace }}/dist/
+            echo "✅ dtbo.img copiado a dist/"
+          fi
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-NTSYNC-B122-${{ github.run_number }}"
-          path: |
-            ${{ github.workspace }}/**/out/arch/arm64/boot/Image*
-            ${{ github.workspace }}/**/out/arch/arm64/boot/dtbo.img
+          name: "Kernel-V60-NTSYNC-${{ github.run_number }}"
+          path: dist/
+          if-no-files-found: error

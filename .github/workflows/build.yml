@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Wiki Standard"
+name: "Build kernels #134 - Lineage 23.2"
 
 env:
   CONFIGURATION: "repos.json"
@@ -8,39 +8,36 @@ on:
 
 jobs:
   Build-Kernel:
-    name: "🐎 LineageOS Standard Build"
+    name: "🐎 V60 Android 16 Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Dependencias de la Wiki"
+      - name: "📦 Dependencias"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git git-lfs libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools
 
-      - name: "🌟 Clonando Fuente (Standard)"
-        run: git clone --branch lineage-21.0 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
-
-      - name: "💫 Setup Toolchains Oficiales"
+      - name: "🌟 Clonando Fuente (Rama 23.2)"
         run: |
-          # Clang oficial de LineageOS (r416183b1)
+          # Clonamos específicamente la rama de Android 16
+          git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
+
+      - name: "💫 Setup Toolchains"
+        run: |
           git clone --branch lineage-20 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b1 clang --depth=1
-          # GCC oficial de LineageOS (aarch64 4.9)
           git clone --branch lineage-19.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64 --depth=1
           
-          # Añadir binarios al PATH de GitHub
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
           echo "$(pwd)/gcc64/bin" >> $GITHUB_PATH
-          # Configurar variables de entorno para las librerías del compilador
           echo "LD_LIBRARY_PATH=$(pwd)/clang/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      - name: "🛠️ Compilación según Wiki"
+      - name: "🛠️ Compilación"
         working-directory: ./kernel_src
         run: |
-          # Argumentos oficiales para kernels SM8250 en Lineage
           ARGS="ARCH=arm64 \
                 CC=clang \
                 CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -53,23 +50,25 @@ jobs:
                 OBJDUMP=llvm-objdump \
                 STRIP=llvm-strip"
           
-          echo "📝 Configurando..."
-          # Intentamos las rutas conocidas de configs para timelm
-          make $ARGS vendor/timelm-perf_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
+          echo "📝 Configurando con defconfig..."
+          # Usamos el archivo que encontraste en la rama 23.2
+          make $ARGS defconfig
           
-          echo "🚀 Iniciando build pura..."
-          # Ignoramos warnings de visibilidad que rompen Clang moderno pero no el de Lineage
-          make -j$(nproc --all) $ARGS KCFLAGS="-Wno-error"
+          echo "🚀 Iniciando build..."
+          # KCFLAGS para evitar que errores de visibilidad detengan la build en Android 16
+          make -j$(nproc --all) $ARGS KCFLAGS="-fno-limit-debug-info -Wno-error"
 
       - name: "📦 Exportar"
         if: always()
         run: |
           mkdir -p dist
-          find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
-          find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
+          if [ -d "kernel_src/arch/arm64/boot" ]; then
+            find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
+            find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
+          fi
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Wiki-B134"
+          name: "Kernel-V60-L23.2-B134"
           path: dist/

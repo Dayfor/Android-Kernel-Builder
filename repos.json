@@ -9,13 +9,13 @@
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://gitlab.com/re-work/prebuilts_clang_host_linux-x86_clang-r530567",
+        "repo": "https://github.com/Prowl-Project/android_prebuilts_clang_host_linux-x86_clang-r530567",
         "branch": "main"
       },
       {
         "name": "gas",
-        "repo": "https://github.com/LineageOS/android_prebuilts_gas_linux-x86",
-        "branch": "lineage-21.0"
+        "repo": "https://github.com/AOSP-Mirror/platform_prebuilts_gas_linux-x86",
+        "branch": "master"
       }
     ],
     "params": {

@@ -1,18 +1,31 @@
-{
-  "repos": [
-    {
-      "name": "kernel",
-      "url": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
+[
+  {
+    "kernelSource": {
+      "name": "lge_sm8250",
+      "repo": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
       "branch": "lineage-21.0",
-      "target": "kernel"
-    }
-  ],
-  "toolchains": [
-    {
-      "name": "clang",
-      "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
-      "branch": "master-kernel-build-2024",
-      "target": "clang"
-    }
-  ]
-}
+      "device": "timelm"
+    },
+    "toolchains": [
+      {
+        "name": "clang",
+        "repo": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
+        "branch": "master-kernel-build-2024"
+      },
+      {
+        "name": "gcc-arm64",
+        "repo": "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9",
+        "branch": "master"
+      }
+    ],
+    "params": {
+      "ARCH": "arm64",
+      "CC": "clang",
+      "AR": "llvm-ar",
+      "CLANG_TRIPLE": "aarch64-linux-gnu-",
+      "CROSS_COMPILE": "aarch64-linux-android-",
+      "CROSS_COMPILE_COMPAT": "arm-linux-androideabi-"
+    },
+    "withKernelSU": "false"
+  }
+]

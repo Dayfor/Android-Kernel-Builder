@@ -67,6 +67,7 @@ jobs:
             repo=$(echo $toolchains | jq -r ".[$i].repo")
             branch=$(echo $toolchains | jq -r ".[$i].branch")
             git clone --branch $branch $repo $name --depth=1
+            # Localizar la carpeta bin de Clang (Google usa rutas profundas)
             BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
             if [ -n "$BIN_PATH" ]; then
               echo "$BIN_PATH" >> $GITHUB_PATH
@@ -88,23 +89,28 @@ jobs:
           args="$args AR=$(echo $params | jq -r ".AR")"
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🔧 Sync boot.img & Find Defconfig"
+      - name: "🔧 Sync boot.img & Patch Config"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Buscar la ruta real del defconfig (priorizando vendor)
-          SEARCH_CONF=$(find arch/arm64/configs -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
-          if [ -z "$SEARCH_CONF" ]; then
-            echo "❌ Error: No se encontró ${{ env.DEFCONFIG_NAME }}"
-            exit 1
+          # 1. Buscar el mejor defconfig disponible
+          if [ -f "arch/arm64/configs/vendor/${{ env.DEFCONFIG_NAME }}" ]; then
+            SEARCH_CONF="arch/arm64/configs/vendor/${{ env.DEFCONFIG_NAME }}"
+          elif [ -f "arch/arm64/configs/${{ env.DEFCONFIG_NAME }}" ]; then
+            SEARCH_CONF="arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          else
+            # Si no encuentra timelm, usa el genérico que enlazaste
+            SEARCH_CONF="arch/arm64/configs/defconfig"
           fi
-          FINAL_CONF=$(echo $SEARCH_CONF | sed 's|arch/arm64/configs/||')
-          echo "FINAL_CONF=$FINAL_CONF" >> $GITHUB_ENV
-
-          # Inyectar CMDLINE del boot.img proporcionado
-          scripts/config --file $SEARCH_CONF --set-str CONFIG_CMDLINE "androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
-          scripts/config --file $SEARCH_CONF --enable CONFIG_CMDLINE_EXTEND
           
-          # Parche para orphan-handling
+          echo "Usando base: $SEARCH_CONF"
+          cp $SEARCH_CONF arch/arm64/configs/final_build_defconfig
+          echo "FINAL_CONF=final_build_defconfig" >> $GITHUB_ENV
+
+          # 2. Inyectar los parámetros de tu boot.img
+          scripts/config --file arch/arm64/configs/final_build_defconfig --set-str CONFIG_CMDLINE "androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
+          scripts/config --file arch/arm64/configs/final_build_defconfig --enable CONFIG_CMDLINE_EXTEND
+          
+          # 3. Fix para orphan-handling
           sed -i 's/--orphan-handling=warn//g' scripts/Makefile.extrawarn || true
 
       - name: "👍 Make defconfig"

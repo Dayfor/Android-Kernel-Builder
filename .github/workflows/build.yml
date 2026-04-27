@@ -1,11 +1,11 @@
-name: "Build kernels #134 - Techpack Fix"
+name: "Build kernels #134 - Alcatraz Clean"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Techpack-Fixed Build"
+    name: "🚀 V60 Alcatraz Clean Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
@@ -19,12 +19,12 @@ jobs:
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
           clang lld llvm
 
-      - name: "🌟 Clonando Fuente (Auto-Branch)"
+      - name: "🌟 Clonando Fuente"
         run: |
           git clone --branch main https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1 || \
           git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🔧 Inyección de Compatibilidad y Techpack Fix"
+      - name: "🔧 Hotfixes de Compatibilidad"
         working-directory: ./kernel_src
         run: |
           # 1. Fix MMU Notifier
@@ -38,29 +38,33 @@ jobs:
               with open(path, 'w') as f: f.write(content)
           "
           
-          # 2. Forzar desactivación de Werror en TODO el árbol incluyendo techpack
+          # 2. Desactivar Werror globalmente
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
-          
-          # 3. Fix específico para controladores de audio de Qualcomm (Techpack)
-          # Esto evita fallos por variables no inicializadas o punteros incompatibles en el DSP
-          if [ -d "techpack/audio" ]; then
-            find techpack/audio -name "Makefile" | xargs sed -i 's/-Werror/-Wno-error/g'
-            echo "ccflags-y += -Wno-error -Wno-implicit-function-declaration" >> techpack/audio/Makefile
-          fi
 
-      - name: "🛠️ Configuración y Compilación"
+      - name: "🛠️ Configuración y Limpieza de Defconfig"
+        working-directory: ./kernel_src
+        run: |
+          LLD_PATH=$(which ld.lld)
+          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH"
+          
+          # Cargar la configuración base
+          make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
+          
+          # DESACTIVAR TECHPACK: Esto evita el error en techpack/audio
+          echo "CONFIG_TECHPACK=n" >> .config
+          echo "CONFIG_MSM_AUDIO_ION=n" >> .config
+          # Forzar regeneración de la config sin los módulos problemáticos
+          make $ARGS olddefconfig
+
+      - name: "🚀 Compilación Final"
         working-directory: ./kernel_src
         run: |
           LLD_PATH=$(which ld.lld)
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          echo "📝 Configurando..."
-          make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
+          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
           
-          echo "🚀 Compilando con Techpack-Safe Flags..."
-          # Añadimos flags adicionales para que el linker y el compilador sean más permisivos con el código legacy de audio
-          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type -Wno-format -Wno-unused-label"
-          
+          # Compilar directamente el kernel
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
       - name: "📦 Exportar Artefactos"
@@ -74,5 +78,6 @@ jobs:
       - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Alcatraz-TechpackFixed"
+          name: "Kernel-V60-Alcatraz-Clean"
           path: dist/
+

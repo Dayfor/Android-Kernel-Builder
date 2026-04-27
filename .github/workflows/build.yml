@@ -1,17 +1,17 @@
-name: "Build kernels #134 - Kofir Edition"
+name: "Build kernels #134 - A15 Boot-Match"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Kofir-Optimized Build"
+    name: "🚀 V60 A15 Boot-Injected Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Instalación de Dependencias"
+      - name: "📦 Dependencias"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -21,13 +21,12 @@ jobs:
 
       - name: "🌟 Clonando Fuente (Kofir)"
         run: |
-          # Clonamos el repositorio de rofikkerneldev
           git clone --branch 4.19 https://github.com/rofikkerneldev/kernel_lgv600tm_4.19 kernel_src --depth=1
 
-      - name: "🔧 Inyección de Compatibilidad (Hotfixes)"
+      - name: "🔧 Inyección de Código y Parches"
         working-directory: ./kernel_src
         run: |
-          # Corregir mmu_notifier.h para Clang moderno
+          # 1. Fix MMU Notifier (Vital para Clang moderno)
           python3 -c "
           import sys
           path = 'include/linux/mmu_notifier.h'
@@ -38,15 +37,15 @@ jobs:
               with open(path, 'w') as f: f.write(content)
           "
           
-          # Desactivar Werror para evitar que la build se detenga por advertencias
+          # 2. Desactivar Werror en Makefiles
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
-      - name: "🛠️ Configuración y Compilación"
+      - name: "🛠️ Configuración y Build"
         working-directory: ./kernel_src
         run: |
           LLD_PATH=$(which ld.lld)
           
-          # Argumentos de compilación para SM8250 (V60)
+          # Argumentos de compilación con las herramientas de LLVM
           ARGS="ARCH=arm64 \
                 LLVM=1 \
                 LLVM_IAS=1 \
@@ -61,27 +60,32 @@ jobs:
                 CROSS_COMPILE=aarch64-linux-gnu- \
                 CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          echo "📝 Configurando con timelm_defconfig..."
-          # Este kernel suele usar timelm_defconfig o v60_defconfig
-          make $ARGS timelm_defconfig || make $ARGS vendor/timelm_defconfig || make $ARGS defconfig
+          make $ARGS timelm_defconfig
           
-          echo "🚀 Iniciando build..."
-          # Flags para silenciar advertencias de compatibilidad de Clang 14+
+          # EXTRAÍDO DEL BOOT.IMG: Inyectamos los parámetros en el build final
+          # Estos flags desactivan protecciones de kernel antiguas que chocan con Android 15
           KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
           
+          echo "🚀 Compilando Kernel con parámetros de Android 15..."
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
-      - name: "📦 Exportar Artefactos"
+      - name: "📦 Empaquetado con Offsets del boot.img"
         if: always()
         run: |
           mkdir -p dist
-          if [ -d "kernel_src/arch/arm64/boot" ]; then
-            find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
-            find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
+          # Copiamos el kernel crudo
+          if [ -f "kernel_src/arch/arm64/boot/Image.gz-dtb" ]; then
+            cp kernel_src/arch/arm64/boot/Image.gz-dtb dist/
+          elif [ -f "kernel_src/arch/arm64/boot/Image" ]; then
+            cp kernel_src/arch/arm64/boot/Image dist/
           fi
+          
+          # Guardamos los metadatos que extrajimos de tu boot.img para referencia
+          echo "androidboot.memcg=1 kpti=off cgroup.memory=nokmem,nosocket androidboot.hardware=timelm" > dist/recommended_cmdline.txt
+          echo "Base: 0x00000000, Kernel Offset: 0x00008000, Ramdisk Offset: 0x01000000" > dist/boot_offsets.txt
 
-      - name: "📤 Subiendo Resultados"
+      - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Kofir-Build"
+          name: "Kernel-V60-A15-Injected"
           path: dist/

@@ -1,4 +1,4 @@
-name: "Build kernels #116"
+name: "Build kernels #119 - Pure Test"
 
 env:
   CONFIGURATION: "repos.json"
@@ -26,7 +26,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
-    name: "🐎 Build kernel"
+    name: "🐎 Build kernel (Pure)"
     runs-on: ubuntu-latest
     needs:
       - Set-repos
@@ -38,24 +38,22 @@ jobs:
     env:
       kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
       kernelName: "${{ matrix.repos.kernelSource.name }}"
-      kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
-      kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
-      kernelDevice: "${{ matrix.repos.kernelSource.device }}"
-      # Ajustado a la ruta vendor/sm8250 que mencionaste
-      DEFCONFIG_NAME: "vendor/${{ matrix.repos.kernelSource.device }}_defconfig"
+      kernelRepo: "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250"
+      kernelBranch: "lineage-21.0"
+      kernelDevice: "timelm"
       
     steps:
       - name: "✨ Create working dir"
         run: mkdir -p "${{ env.kernelDir }}"
 
-      - name: "⭐ Install Build Environment"
+      - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu \
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev
           
-          # Instalación crítica de Python 2.7 para scripts de Qualcomm (DTBO)
+          # Python 2.7 necesario para scripts antiguos de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -67,7 +65,7 @@ jobs:
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Get Toolchains (Clang AOSP & GCC)"
+      - name: "💫 Get toolchains"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -79,59 +77,46 @@ jobs:
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
             git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1 || true
-            
-            # Añadir binarios al PATH
-            if [ -d "$(pwd)/$name/bin" ]; then
-              echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-            else
-              echo "$(pwd)/$name" >> $GITHUB_PATH
-            fi
+            [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "😎 Setup Compilation Arguments"
+      - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          # Activación de LLVM e Integrated Assembler (IAS) para SM8250
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
-          
-          # Inyección de KCFLAGS para omitir advertencias que rompen la build en Clang
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-unknown-warning-option\""
-          
+          # Quitamos los flags de ignorar errores para ver la realidad del código
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Fixes & Parches de LG"
+      - name: "🛠️ Compilación Final (Sin Parches)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Eliminar Werror de los Makefiles
-          find . -type f -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
-          
-          # Fix de humedad SMB5 (Drivers de LG)
-          SMB5_FILE=$(find . -name "qpnp-smb5.c" | head -n 1)
-          if [ -n "$SMB5_FILE" ]; then
-            sed -i 's/defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/0 \&\& defined(CONFIG_LGE_USB_MOISTURE_DETECTION)/g' "$SMB5_FILE"
-            sed -i 's/chg->uusb_moisture_protection_capable =/\/\/ /g' "$SMB5_FILE"
+          # Usamos timelm_defconfig por defecto
+          CONF_NAME="timelm_defconfig"
+          CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
+
+          if [ -z "$CONF_PATH" ]; then
+            echo "❌ ERROR: No se encontró $CONF_NAME"
+            exit 1
           fi
 
-      - name: "🛠️ Compilación del Kernel"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          # 1. Configurar
-          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
-          # 2. Compilar
+          echo "✅ Usando configuración original: $CONF_PATH"
+          make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
+          
+          # No tocamos el .config, dejamos que use ION y todo lo que traiga por defecto
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
-      - name: "📤 Subir Artefactos (Image & DTBO)"
+      - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LG-V60-${{ github.run_number }}"
+          name: "Kernel-Pure-Test-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img
-            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtb*
+

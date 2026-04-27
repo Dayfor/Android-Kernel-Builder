@@ -1,78 +1,65 @@
-name: "Build kernels #134 - Alcatraz Final Sync"
+name: "Build kernels #188 - LineageOS 23.2 (A16)"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Final Build"
+    name: "🚀 V60 LineageOS 23.2 Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Dependencias"
+      - name: "📦 Toolchain Clang 12"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
-          clang lld llvm
+          clang-12 lld-12 llvm-12
 
       - name: "🌟 Clonando Fuente"
         run: |
-          git clone --branch main https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1 || \
-          git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
+          git clone --branch lineage-21 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "✂️ Cirugía de Makefile y Techpack"
+      - name: "🆔 Forzando Versión 23.2 en el Kernel"
         working-directory: ./kernel_src
         run: |
-          # Eliminar menciones de techpack para que no intente entrar
-          sed -i '/techpack/d' Makefile
-          sed -i '/techpack/d' scripts/Makefile.build
-          # Eliminar la carpeta para liberar espacio y evitar escaneos
-          rm -rf techpack
-
-      - name: "🔧 Inyección Maestra de MMU Notifier"
-        working-directory: ./kernel_src
-        run: |
-          # Inyectamos el enum directamente al principio de mmu_notifier.h para que sea global
-          python3 -c "
-          import sys
-          path = 'include/linux/mmu_notifier.h'
-          with open(path, 'r') as f: lines = f.readlines()
-          # Insertar después de los primeros comentarios/includes
-          for i, line in enumerate(lines):
-              if '#define' in line or '#include' in line:
-                  lines.insert(i + 1, '\nenum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };\n')
-                  break
-          with open(path, 'w') as f: f.writelines(lines)
-          "
+          # Cambiamos el nombre de la versión local para que en 'Acerca del dispositivo' aparezca 23.2
+          echo "-LineageOS-23.2-A16" > localversion
           
-          # Desactivar Werror agresivamente
-          find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
+          # Inyectamos el CMDLINE del boot.img de la 23.2 que analizamos
+          CMDLINE="androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.hardware=timelm androidboot.init_fatal_reboot_target=recovery"
+          sed -i "s/CONFIG_CMDLINE=\"\"/CONFIG_CMDLINE=\"$CMDLINE\"/g" arch/arm64/configs/vendor/timelm_defconfig
 
-      - name: "🛠️ Configuración"
+      - name: "🛠️ Configuración Avanzada Android 16"
         working-directory: ./kernel_src
         run: |
-          LLD_PATH=$(which ld.lld)
-          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH"
-          make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
+          export CLANG_PATH=$(which clang-12)
+          export LLD_PATH=$(which ld.lld-12)
+          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=$CLANG_PATH LD=$LLD_PATH"
           
-          # Asegurar que la config no busque techpack
-          sed -i 's/CONFIG_TECHPACK=y/CONFIG_TECHPACK=n/g' .config
+          make $ARGS timelm_defconfig
+          
+          # Requisitos obligatorios para LineageOS 23.2 (A16)
+          scripts/config --enable CONFIG_MEMCG
+          scripts/config --enable CONFIG_MEMCG_SWAP
+          scripts/config --enable CONFIG_BLK_CGROUP
+          scripts/config --enable CONFIG_CGROUP_FREEZER
+          scripts/config --enable CONFIG_CPUSETS
+          scripts/config --set-str CONFIG_LOCALVERSION "-LineageOS-23.2"
+          
           make $ARGS olddefconfig
 
-      - name: "🚀 Compilación de Imagen"
+      - name: "🚀 Compilación Final"
         working-directory: ./kernel_src
         run: |
-          LLD_PATH=$(which ld.lld)
-          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          export CLANG_PATH=$(which clang-12)
+          export LLD_PATH=$(which ld.lld-12)
+          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=$CLANG_PATH LD=$LLD_PATH AR=llvm-ar-12 NM=llvm-nm-12 OBJCOPY=llvm-objcopy-12 OBJDUMP=llvm-objdump-12 STRIP=llvm-strip-12 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          # Añadimos flags para ignorar errores de tipos incompletos si persisten
-          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
-          
-          make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
+          make -j$(nproc --all) $ARGS
 
       - name: "📦 Exportar Artefactos"
         if: always()
@@ -80,10 +67,9 @@ jobs:
           mkdir -p dist
           find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
           find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
-          echo "androidboot.memcg=1 kpti=off cgroup.memory=nokmem,nosocket" > dist/flash_instructions.txt
 
       - name: "📤 Subiendo"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Alcatraz-Final"
+          name: "Kernel-V60-LineageOS-23.2"
           path: dist/

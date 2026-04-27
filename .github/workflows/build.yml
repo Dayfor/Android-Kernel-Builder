@@ -1,4 +1,4 @@
-name: "Build kernels #119 - Pure Test"
+name: "Build kernels #119 - Pure Test v2"
 
 env:
   CONFIGURATION: "repos.json"
@@ -53,7 +53,6 @@ jobs:
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev
           
-          # Python 2.7 necesario para scripts antiguos de Qualcomm
           wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
           tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
           ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
@@ -65,7 +64,7 @@ jobs:
         working-directory: "./${{ env.kernelDir }}"
         run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
-      - name: "💫 Get toolchains"
+      - name: "💫 Get toolchains & Fix PATH"
         working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -76,8 +75,18 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1 || git clone --recursive "$repo" "$name" --depth=1 || true
-            [ -d "$(pwd)/$name/bin" ] && echo "$(pwd)/$name/bin" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
+            
+            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
+            
+            # Búsqueda robusta de binarios
+            BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
+            if [ -n "$BIN_PATH" ]; then
+              echo "✅ PATH: $BIN_PATH"
+              echo "$BIN_PATH" >> $GITHUB_PATH
+            else
+              echo "✅ PATH: $(pwd)/$name"
+              echo "$(pwd)/$name" >> $GITHUB_PATH
+            fi
           done
 
       - name: "😎 Set args"
@@ -86,18 +95,17 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
+          # LLVM=1 indica al kernel que use las herramientas del Clang de Google
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
-          # Quitamos los flags de ignorar errores para ver la realidad del código
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32 AR CC LD NM OBJCOPY OBJDUMP STRIP; do
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Compilación Final (Sin Parches)"
+      - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          # Usamos timelm_defconfig por defecto
           CONF_NAME="timelm_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
 
@@ -109,14 +117,13 @@ jobs:
           echo "✅ Usando configuración original: $CONF_PATH"
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
-          # No tocamos el .config, dejamos que use ION y todo lo que traiga por defecto
+          # Sin parches, build pura para testear toolchains e ION
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-Pure-Test-${{ github.run_number }}"
+          name: "Kernel-Pure-B119-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img
-

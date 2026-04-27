@@ -9,16 +9,21 @@
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
-        "branch": "master-kernel-build-2022"
+        "repo": "https://github.com/Apon77Lab/android_prebuilts_clang_host_linux-x86_clang-r530567",
+        "branch": "main"
+      },
+      {
+        "name": "gas",
+        "repo": "https://android.googlesource.com/platform/prebuilts/gas/linux-x86",
+        "branch": "master"
       }
     ],
     "params": {
       "ARCH": "arm64",
       "CC": "clang",
       "CLANG_TRIPLE": "aarch64-linux-gnu-",
-      "CROSS_COMPILE": "aarch64-linux-android-",
-      "CROSS_COMPILE_COMPAT": "arm-linux-androideabi-",
+      "CROSS_COMPILE": "aarch64-linux-gnu-",
+      "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
       "AR": "llvm-ar"
     },
     "withKernelSU": "false"

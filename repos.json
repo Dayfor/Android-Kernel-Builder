@@ -12,11 +12,6 @@
         "repo": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
         "branch": "master-kernel-build-2024"
       }
-    ],
-    "params": {
-      "CROSS_COMPILE": "aarch64-linux-gnu-",
-      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
-      "CLANG_TRIPLE": "aarch64-linux-gnu-"
-    }
+    ]
   }
 ]

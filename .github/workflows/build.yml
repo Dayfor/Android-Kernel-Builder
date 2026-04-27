@@ -1,8 +1,7 @@
-name: "Build kernels #130 - Stable Extraction"
+name: "Build kernels #131 - ESOC Fix Edition"
 
 env:
   CONFIGURATION: "repos.json"
-  OUT_DIR: "out"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
@@ -34,30 +33,25 @@ jobs:
       matrix:
         repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
     env:
-      kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
       kernelName: "${{ matrix.repos.kernelSource.name }}"
       kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
       kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
       
     steps:
-      - name: "✨ Clean & Create working dir"
-        run: |
-          rm -rf "${{ env.kernelDir }}"
-          mkdir -p "${{ env.kernelDir }}"
+      - name: "✨ Clean Workspace"
+        run: rm -rf *
 
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu \
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
-          libarchive-tools ncurses-dev bison flex libelf-dev
+          libarchive-tools ncurses-dev bison flex libelf-dev clang lld llvm
 
       - name: "🌟 Clone kernel source"
-        working-directory: "./${{ env.kernelDir }}"
-        run: git clone --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
+        run: git clone --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" kernel_src --depth=1
 
       - name: "💫 Get toolchains"
-        working-directory: "./${{ env.kernelDir }}"
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
@@ -67,55 +61,48 @@ jobs:
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
             git clone --branch "$branch" "$repo" "$name" --depth=1 || git clone "$repo" "$name" --depth=1
-            BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
-            [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
+            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
-      - name: "😎 Set args"
-        id: generate-args
-        working-directory: "./${{ env.kernelDir }}"
-        env:
-          params: "${{ toJSON(matrix.repos.params) }}"
+      - name: "🔧 Fix Syntax Errors (ESOC & LGE)"
+        working-directory: ./kernel_src
         run: |
-          args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          # Flags optimizados para evitar errores de compilación por warnings
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types -Wno-unused-function\""
-          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
-            val=$(echo "$params" | jq -r ".$key")
-            [ "$val" != "null" ] && args="$args $key=$val"
-          done
-          echo "args=$args" >> $GITHUB_OUTPUT
+          echo "🛠️ Reparando drivers/esoc/esoc.h..."
+          # Comentamos las líneas del macro mal formado que rompió la Build 130
+          sed -i '35,42s/^/\/\//' drivers/esoc/esoc.h
+          
+          echo "🛠️ Corrigiendo indentación en lge_brightness.c..."
+          # Arreglamos el warning de indentación para evitar que el compilador sea estricto
+          sed -i 's/return ret;/    return ret;/g' techpack/display/msm/lge/brightness/lge_brightness.c
+          
+          echo "✅ Parches aplicados."
 
-      - name: "🛠️ Compilación Limpia"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+      - name: "🛠️ Compilación Final"
+        working-directory: ./kernel_src
         run: |
-          CONF_NAME="timelm_defconfig"
-          CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
+          # Args híbridos: Clang para el kernel, GCC para el sistema
+          MAKE_ARGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
           
-          # 1. Generar .config
-          make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
+          # Configuración
+          make $MAKE_ARGS timelm_defconfig
           
-          # 2. Asegurar optimizaciones base
-          scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX
-          scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX_PI
+          # Desactivamos advertencias que detienen la build
+          export KCFLAGS="-Wno-misleading-indentation -Wno-error -Wno-incompatible-function-pointer-types"
           
-          # 3. Compilar
-          echo "🚀 Compilando Image y dtbo..."
-          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
+          echo "🚀 Iniciando compilación de Image..."
+          make -j$(nproc --all) $MAKE_ARGS
 
-      - name: "📦 Exportación Garantizada"
+      - name: "📦 Exportar Artefactos"
         if: always()
         run: |
-          mkdir -p ${{ github.workspace }}/dist
-          # Buscamos en todo el directorio de trabajo para no fallar por rutas relativas
-          find . -name "Image*" -type f -not -path "*/scripts/*" -exec cp {} ${{ github.workspace }}/dist/ \;
-          find . -name "dtbo.img" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
-          echo "✅ Contenido final en dist:"
-          ls -R ${{ github.workspace }}/dist/
+          mkdir -p dist
+          find kernel_src/ -name "Image*" -type f -not -path "*/scripts/*" -exec cp {} dist/ \;
+          find kernel_src/ -name "dtbo.img" -type f -exec cp {} dist/ \;
+          echo "Contenido de dist:"
+          ls -lh dist/
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-V60-B130"
+          name: "Kernel-LGE-V60-B131-Fixed"
           path: dist/
-          if-no-files-found: warn

@@ -1,17 +1,17 @@
-name: "Build kernels #134 - Hard Patch L23.2"
+name: "Build kernels #134 - Kofir Edition"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🐎 V60 Android 16 Build"
+    name: "🚀 V60 Kofir-Optimized Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Dependencias"
+      - name: "📦 Instalación de Dependencias"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -19,58 +19,59 @@ jobs:
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
           clang lld llvm
 
-      - name: "🌟 Clonando Fuente"
+      - name: "🌟 Clonando Fuente (Kofir)"
         run: |
-          git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
+          # Clonamos el repositorio de rofikkerneldev
+          git clone --branch 4.19 https://github.com/rofikkerneldev/kernel_lgv600tm_4.19 kernel_src --depth=1
 
-      - name: "🛠️ Creando y Aplicando Parches de Compatibilidad"
+      - name: "🔧 Inyección de Compatibilidad (Hotfixes)"
         working-directory: ./kernel_src
         run: |
-          # Parche para MMU y CPU Soft Restart
-          cat <<EOF > fix_compat.patch
-          --- a/include/linux/mmu_notifier.h
-          +++ b/include/linux/mmu_notifier.h
-          @@ -342,6 +342,8 @@
-           	struct mmu_notifier_range *range);
-           };
-           
-          +enum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };
-          +
-           extern int mmu_notifier_register(struct mmu_notifier *mn,
-           				 struct mm_struct *mm);
-           extern int __mmu_notifier_register(struct mmu_notifier *mn,
-          --- a/arch/arm64/kernel/cpu-reset.h
-          +++ b/arch/arm64/kernel/cpu-reset.h
-          @@ -16,8 +16,7 @@
-           
-           extern void cpu_soft_restart(unsigned long entry, ...);
-           
-          -static inline void __noreturn __nocfi cpu_soft_restart(unsigned long entry,
-          -						      unsigned long arg0,
-          -						      unsigned long arg1,
-          -						      unsigned long arg2)
-          +void __noreturn cpu_soft_restart(unsigned long entry, unsigned long arg0);
-           EOF
-
-          patch -p1 < fix_compat.patch || echo "⚠️ El parche falló pero intentaremos seguir"
-
-          # Limpieza agresiva de Makefiles
+          # Corregir mmu_notifier.h para Clang moderno
+          python3 -c "
+          import sys
+          path = 'include/linux/mmu_notifier.h'
+          with open(path, 'r') as f: content = f.read()
+          if 'enum mmu_notifier_event' not in content:
+              insertion = '\nenum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };\n'
+              content = content.replace('struct mmu_notifier_range {', insertion + 'struct mmu_notifier_range {')
+              with open(path, 'w') as f: f.write(content)
+          "
+          
+          # Desactivar Werror para evitar que la build se detenga por advertencias
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
       - name: "🛠️ Configuración y Compilación"
         working-directory: ./kernel_src
         run: |
           LLD_PATH=$(which ld.lld)
-          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          make $ARGS defconfig
+          # Argumentos de compilación para SM8250 (V60)
+          ARGS="ARCH=arm64 \
+                LLVM=1 \
+                LLVM_IAS=1 \
+                CC=clang \
+                LD=$LLD_PATH \
+                AR=llvm-ar \
+                NM=llvm-nm \
+                OBJCOPY=llvm-objcopy \
+                OBJDUMP=llvm-objdump \
+                STRIP=llvm-strip \
+                CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=aarch64-linux-gnu- \
+                CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          
+          echo "📝 Configurando con timelm_defconfig..."
+          # Este kernel suele usar timelm_defconfig o v60_defconfig
+          make $ARGS timelm_defconfig || make $ARGS vendor/timelm_defconfig || make $ARGS defconfig
           
           echo "🚀 Iniciando build..."
-          # KCFLAGS extremos para ignorar todo lo que no sea crítico
-          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type -Wno-unused-variable -Wno-unused-function"
+          # Flags para silenciar advertencias de compatibilidad de Clang 14+
+          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
+          
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
-      - name: "📦 Exportar"
+      - name: "📦 Exportar Artefactos"
         if: always()
         run: |
           mkdir -p dist
@@ -79,8 +80,8 @@ jobs:
             find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
           fi
 
-      - name: "📤 Upload Artifacts"
+      - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-L23.2-Patched"
+          name: "Kernel-V60-Kofir-Build"
           path: dist/

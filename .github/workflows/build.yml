@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Native Fix"
+name: "Build kernels #134 - LLD Fix"
 
 on:
   workflow_dispatch:
@@ -11,23 +11,35 @@ jobs:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Dependencias"
+      - name: "📦 Instalación Completa de LLVM/LLD"
         run: |
           sudo apt-get update
+          # Instalamos lld y llvm explícitamente
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-          checkpolicy bison flex libncurses5-dev python3 libarchive-tools
+          checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
+          clang lld llvm
 
       - name: "🌟 Clonando Fuente (Rama 23.2)"
         run: |
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🛠️ Compilación con Clang Nativo"
+      - name: "🛠️ Configuración de Enlazador y Compilación"
         working-directory: ./kernel_src
         run: |
-          # Usamos el Clang que ya trae el sistema (Ubuntu 22.04+)
+          # Crear enlaces simbólicos si no existen para asegurar que ld.lld sea ejecutable
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld.lld
+          sudo ln -sf /usr/bin/llvm-objcopy /usr/bin/llvm-objcopy
+          sudo ln -sf /usr/bin/llvm-ar /usr/bin/llvm-ar
+
           ARGS="ARCH=arm64 \
                 CC=clang \
+                LD=ld.lld \
+                AR=llvm-ar \
+                NM=llvm-nm \
+                OBJCOPY=llvm-objcopy \
+                OBJDUMP=llvm-objdump \
+                STRIP=llvm-strip \
                 CLANG_TRIPLE=aarch64-linux-gnu- \
                 CROSS_COMPILE=aarch64-linux-gnu- \
                 CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -37,11 +49,8 @@ jobs:
           echo "📝 Configurando con defconfig..."
           make $ARGS defconfig
           
-          echo "🚀 Iniciando build con parches de compatibilidad..."
-          # Estos flags son CRUCIALES para que el Clang moderno acepte el código viejo del kernel
-          # -Wno-error: Ignora errores leves
-          # -fno-strict-aliasing: Evita errores de punteros
-          # -Wno-visibility: Salta el error del enum mmu_notifier que vimos antes
+          echo "🚀 Iniciando build..."
+          # Mantenemos los flags de compatibilidad para el error del enum mmu_notifier
           export KCFLAGS="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration"
           
           make -j$(nproc --all) $ARGS KCFLAGS="$KCFLAGS"
@@ -58,5 +67,5 @@ jobs:
       - name: "📤 Subiendo Artefactos"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-L23.2-Native"
+          name: "Kernel-V60-L23.2-LLD-Fixed"
           path: dist/

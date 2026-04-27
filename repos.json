@@ -4,7 +4,7 @@
       "name": "lge_sm8250",
       "repo": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
       "branch": "lineage-21.0",
-      "device": "defconfig"
+      "device": "timelm"
     },
     "toolchains": [
       {

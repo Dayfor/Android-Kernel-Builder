@@ -1,4 +1,4 @@
-name: "Build kernels #134 - LLD Fix"
+name: "Build kernels #134 - LLD Absolute Fix"
 
 on:
   workflow_dispatch:
@@ -11,10 +11,9 @@ jobs:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Instalación Completa de LLVM/LLD"
+      - name: "📦 Instalación de Herramientas LLVM"
         run: |
           sudo apt-get update
-          # Instalamos lld y llvm explícitamente
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
@@ -24,17 +23,19 @@ jobs:
         run: |
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🛠️ Configuración de Enlazador y Compilación"
+      - name: "🛠️ Configuración y Compilación"
         working-directory: ./kernel_src
         run: |
-          # Crear enlaces simbólicos si no existen para asegurar que ld.lld sea ejecutable
-          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld.lld
-          sudo ln -sf /usr/bin/llvm-objcopy /usr/bin/llvm-objcopy
-          sudo ln -sf /usr/bin/llvm-ar /usr/bin/llvm-ar
+          # Localizamos la ruta real de ld.lld para pasarla directamente
+          LLD_PATH=$(which ld.lld)
+          echo "✅ Linker encontrado en: $LLD_PATH"
 
+          # Definimos los argumentos usando rutas del sistema
           ARGS="ARCH=arm64 \
+                LLVM=1 \
+                LLVM_IAS=1 \
                 CC=clang \
-                LD=ld.lld \
+                LD=$LLD_PATH \
                 AR=llvm-ar \
                 NM=llvm-nm \
                 OBJCOPY=llvm-objcopy \
@@ -42,15 +43,13 @@ jobs:
                 STRIP=llvm-strip \
                 CLANG_TRIPLE=aarch64-linux-gnu- \
                 CROSS_COMPILE=aarch64-linux-gnu- \
-                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-                LLVM=1 \
-                LLVM_IAS=1"
+                CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
           echo "📝 Configurando con defconfig..."
           make $ARGS defconfig
           
           echo "🚀 Iniciando build..."
-          # Mantenemos los flags de compatibilidad para el error del enum mmu_notifier
+          # KCFLAGS para saltar el error de mmu_notifier y visibilidad
           export KCFLAGS="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration"
           
           make -j$(nproc --all) $ARGS KCFLAGS="$KCFLAGS"

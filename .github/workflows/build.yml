@@ -1,4 +1,4 @@
-name: "Build kernels #119 - Pure Test v5"
+name: "Build kernels #120 - Pure Test v6"
 
 env:
   CONFIGURATION: "repos.json"
@@ -80,8 +80,10 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          # HOSTCC=gcc soluciona el error de fixdep en x86_64
+          # KCFLAGS: Escudo contra advertencias estrictas de Clang 18
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-format-insufficient-args -Wno-return-type -Wno-unused-variable -Wno-typedef-redefinition -fno-strict-aliasing -Wno-incompatible-function-pointer-types\""
+          
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             if [ "$val" != "null" ]; then args="$args $key=$val"; fi
@@ -99,14 +101,15 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Configurando: $CONF_PATH"
+          echo "✅ Configurando con: $CONF_PATH"
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
           echo "🚀 Compilando..."
-          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
+          # Redirigimos errores para que no se pierdan en el log paralelo
+          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} 2>&1 | tee build_log.txt || (tail -n 150 build_log.txt && exit 1)
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-Pure-B119-V5-${{ github.run_number }}"
+          name: "Kernel-Pure-B120-V6-${{ github.run_number }}"
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*

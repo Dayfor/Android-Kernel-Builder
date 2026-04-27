@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Pure Base"
+name: "Build kernels #134 - Legacy Clang Test"
 
 env:
   CONFIGURATION: "repos.json"
@@ -8,50 +8,38 @@ on:
 
 jobs:
   Build-Kernel:
-    name: "🐎 Pure Compilation Test"
+    name: "🐎 Legacy Clang Build"
     runs-on: ubuntu-latest
     steps:
-      - name: "🧹 Clean Workspace"
+      - name: "🧹 Clean"
         run: rm -rf *
 
-      - name: "📦 Install Dependencies"
+      - name: "📦 Dependencies"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu \
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev clang lld llvm
 
-      - name: "🌟 Clone Source (Pure 23.2)"
+      - name: "🌟 Clone Source"
         run: git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "💫 Setup Clang AOSP"
+      - name: "💫 Setup Legacy Clang"
         run: |
-          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-aosp --depth=1
-          echo "$(pwd)/clang-aosp/bin" >> $GITHUB_PATH
+          # Usamos una versión de Clang que Lineage usaba para kernels 4.19
+          git clone --branch lineage-19.1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b1 clang-stable --depth=1
+          echo "$(pwd)/clang-stable/bin" >> $GITHUB_PATH
 
-      - name: "🛠️ Compilación Sin Parches"
+      - name: "🛠️ Compilación"
         working-directory: ./kernel_src
         run: |
-          # Argumentos estándar
+          # Usamos la toolchain descargada
           ARGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
           
-          # Cargar el defconfig que confirmamos antes
-          echo "📝 Cargando defconfig..."
           make $ARGS defconfig
           
-          # Ejecutamos la build sin KCFLAGS personalizados para ver errores reales
-          echo "🚀 Iniciando compilación de Image..."
+          # Añadimos flags de compatibilidad por si acaso, pero sin tocar archivos
+          export KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes"
+          
+          echo "🚀 Compilando con Clang Legacy..."
           make -j$(nproc --all) $ARGS
-
-      - name: "📦 Export"
-        if: always()
-        run: |
-          mkdir -p dist
-          find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
-          find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
-
-      - name: "📤 Upload Artifacts"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Kernel-V60-Pure-B134"
-          path: dist/

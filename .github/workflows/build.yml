@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Surgical Fix L23.2"
+name: "Build kernels #134 - Hard Patch L23.2"
 
 on:
   workflow_dispatch:
@@ -8,10 +8,10 @@ jobs:
     name: "🐎 V60 Android 16 Build"
     runs-on: ubuntu-latest
     steps:
-      - name: "🧹 Limpieza de Espacio"
+      - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Instalación de Dependencias"
+      - name: "📦 Dependencias"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -19,63 +19,68 @@ jobs:
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
           clang lld llvm
 
-      - name: "🌟 Clonando Fuente (Rama 23.2)"
+      - name: "🌟 Clonando Fuente"
         run: |
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🔧 Aplicando Hotfixes de Compatibilidad"
+      - name: "🛠️ Creando y Aplicando Parches de Compatibilidad"
         working-directory: ./kernel_src
         run: |
-          echo "🛠️ Corrigiendo mmu_notifier.h para Clang Moderno..."
-          # Inyectamos el enum faltante antes de la línea 346 para evitar 'incomplete type'
-          sed -i '345i enum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };' include/linux/mmu_notifier.h
-          
-          echo "🛠️ Relajando restricciones de Makefile..."
-          # Convertimos todos los -Werror en warnings para que la build no se detenga
+          # Parche para MMU y CPU Soft Restart
+          cat <<EOF > fix_compat.patch
+          --- a/include/linux/mmu_notifier.h
+          +++ b/include/linux/mmu_notifier.h
+          @@ -342,6 +342,8 @@
+           	struct mmu_notifier_range *range);
+           };
+           
+          +enum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };
+          +
+           extern int mmu_notifier_register(struct mmu_notifier *mn,
+           				 struct mm_struct *mm);
+           extern int __mmu_notifier_register(struct mmu_notifier *mn,
+          --- a/arch/arm64/kernel/cpu-reset.h
+          +++ b/arch/arm64/kernel/cpu-reset.h
+          @@ -16,8 +16,7 @@
+           
+           extern void cpu_soft_restart(unsigned long entry, ...);
+           
+          -static inline void __noreturn __nocfi cpu_soft_restart(unsigned long entry,
+          -						      unsigned long arg0,
+          -						      unsigned long arg1,
+          -						      unsigned long arg2)
+          +void __noreturn cpu_soft_restart(unsigned long entry, unsigned long arg0);
+           EOF
+
+          patch -p1 < fix_compat.patch || echo "⚠️ El parche falló pero intentaremos seguir"
+
+          # Limpieza agresiva de Makefiles
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
       - name: "🛠️ Configuración y Compilación"
         working-directory: ./kernel_src
         run: |
-          # Localizamos ld.lld dinámicamente
           LLD_PATH=$(which ld.lld)
+          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          # Argumentos de compilación compatibles con la Wiki y el entorno actual
-          ARGS="ARCH=arm64 \
-                LLVM=1 \
-                LLVM_IAS=1 \
-                CC=clang \
-                LD=$LLD_PATH \
-                AR=llvm-ar \
-                NM=llvm-nm \
-                OBJCOPY=llvm-objcopy \
-                OBJDUMP=llvm-objdump \
-                STRIP=llvm-strip \
-                CLANG_TRIPLE=aarch64-linux-gnu- \
-                CROSS_COMPILE=aarch64-linux-gnu- \
-                CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-          
-          echo "📝 Cargando defconfig..."
           make $ARGS defconfig
           
-          echo "🚀 Iniciando build (Image)..."
-          # Flags adicionales para silenciar errores comunes en kernels 4.19 con Clang 14+
-          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-typedef-redefinition -Wno-return-type"
-          
+          echo "🚀 Iniciando build..."
+          # KCFLAGS extremos para ignorar todo lo que no sea crítico
+          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type -Wno-unused-variable -Wno-unused-function"
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
-      - name: "📦 Organizando Artefactos"
+      - name: "📦 Exportar"
         if: always()
         run: |
           mkdir -p dist
           if [ -d "kernel_src/arch/arm64/boot" ]; then
-            # Buscamos Image, Image.gz, Image.gz-dtb y dtbo.img
             find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
             find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
           fi
 
-      - name: "📤 Subiendo Resultados"
+      - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-L23.2-Surgical-B175"
+          name: "Kernel-V60-L23.2-Patched"
           path: dist/

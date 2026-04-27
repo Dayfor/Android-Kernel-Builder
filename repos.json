@@ -1,7 +1,7 @@
 {
   "repos": [
     {
-      "name": "kernel_lge_sm8250",
+      "name": "kernel_source",
       "url": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
       "branch": "11",
       "target": "kernel"
@@ -9,9 +9,9 @@
   ],
   "toolchains": [
     {
-      "name": "clang-latest",
+      "name": "clang",
       "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
-      "branch": "master-kernel-build-2024",
+      "branch": "main-kernel-build-2024",
       "target": "toolchain"
     }
   ]

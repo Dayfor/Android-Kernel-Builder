@@ -1,17 +1,17 @@
-name: "Build kernels #189 - LineageOS 23.2 Final"
+name: "Build kernels #191 - LineageOS 23.2 (A16)"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 LineageOS 23.2 (Rama 21)"
+    name: "🚀 V60 LineageOS 23.2 Build"
     runs-on: ubuntu-latest
     steps:
-      - name: "🧹 Limpieza"
+      - name: "🧹 Limpieza de Espacio"
         run: rm -rf *
 
-      - name: "📦 Toolchain Clang 12"
+      - name: "📦 Instalación de Toolchain (Clang 12)"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -19,26 +19,27 @@ jobs:
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
           clang-12 lld-12 llvm-12
 
-      - name: "🌟 Clonando Fuente (lineage-21)"
+      - name: "🌟 Clonando Fuente (Rama lineage-21)"
         run: |
           git clone --branch lineage-21 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🔧 Adaptación de Identidad y CMDLINE"
+      - name: "🔧 Adaptación para Android 16"
         working-directory: ./kernel_src
         run: |
-          # 1. Forzamos la identidad 23.2 en el nombre del kernel
+          # 1. Forzar identidad 23.2
           echo "-LineageOS-23.2-A16" > localversion
           
-          # 2. Inyectamos el CMDLINE exacto del boot.img que mandaste
-          # Este es el ADN que permite que bootee en Android 16
+          # 2. Inyección del CMDLINE extraído del boot.img analizado
           CMDLINE="androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.hardware=timelm androidboot.init_fatal_reboot_target=recovery"
           sed -i "s/CONFIG_CMDLINE=\"\"/CONFIG_CMDLINE=\"$CMDLINE\"/g" arch/arm64/configs/vendor/timelm_defconfig
           
-          # 3. Limpieza de Kconfig para evitar errores de archivos faltantes (Techpack)
-          sed -i '/techpack/d' Makefile
-          sed -i '/techpack/d' Kconfig
+          # 3. Bypass de Techpack (Comentamos la carga para evitar errores de 'file not found')
+          find . -name "Kconfig" | xargs sed -i 's/source "techpack\/Kconfig"/#source "techpack\/Kconfig"/g'
+          
+          # 4. Desactivar avisos como errores
+          find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
-      - name: "🛠️ Configuración de Características de Android 16"
+      - name: "🛠️ Configuración (Kconfig)"
         working-directory: ./kernel_src
         run: |
           export CLANG_PATH=$(which clang-12)
@@ -47,23 +48,37 @@ jobs:
           
           make $ARGS timelm_defconfig
           
-          # Activamos los requisitos de memoria y procesos de la versión 23.2
+          # Habilitar requisitos vitales de LineageOS 23.2
           scripts/config --enable CONFIG_MEMCG
           scripts/config --enable CONFIG_MEMCG_SWAP
+          scripts/config --enable CONFIG_MEMCG_SWAP_ENABLED
           scripts/config --enable CONFIG_BLK_CGROUP
           scripts/config --enable CONFIG_CGROUP_FREEZER
           scripts/config --set-str CONFIG_LOCALVERSION "-LineageOS-23.2"
           
           make $ARGS olddefconfig
 
-      - name: "🚀 Compilación con Clang 12"
+      - name: "🚀 Compilación de Imagen"
         working-directory: ./kernel_src
         run: |
           export CLANG_PATH=$(which clang-12)
           export LLD_PATH=$(which ld.lld-12)
-          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=$CLANG_PATH LD=$LLD_PATH AR=llvm-ar-12 NM=llvm-nm-12 OBJCOPY=llvm-objcopy-12 OBJDUMP=llvm-objdump-12 STRIP=llvm-strip-12 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          # Flags para ignorar advertencias de código antiguo de la rama 21
+          ARGS="ARCH=arm64 \
+                LLVM=1 \
+                LLVM_IAS=1 \
+                CC=$CLANG_PATH \
+                LD=$LLD_PATH \
+                AR=llvm-ar-12 \
+                NM=llvm-nm-12 \
+                OBJCOPY=llvm-objcopy-12 \
+                OBJDUMP=llvm-objdump-12 \
+                STRIP=llvm-strip-12 \
+                CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=aarch64-linux-gnu- \
+                CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          
+          # Flags adicionales para estabilidad en kernels 4.19
           KCF="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types"
           
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"

@@ -1,4 +1,4 @@
-name: "Build kernels #119 - Pure Test v5"
+name: "Build kernels #119 - Pure Test v4"
 
 env:
   CONFIGURATION: "repos.json"
@@ -17,6 +17,7 @@ jobs:
     steps:
       - name: "😄 Checkout"
         uses: actions/checkout@v4
+
       - name: "😆 Generate Matrix"
         id: generate-matrix
         run: |
@@ -27,7 +28,8 @@ jobs:
   Build-Kernel:
     name: "🐎 Build kernel (Pure)"
     runs-on: ubuntu-latest
-    needs: - Set-repos
+    needs:
+      - Set-repos
     strategy:
       max-parallel: 2
       fail-fast: true
@@ -46,13 +48,20 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu \
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu \
           gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
           libarchive-tools ncurses-dev bison flex libelf-dev
+          
+          wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
+          tar -xzf Python-2.7.18.tgz && cd Python-2.7.18
+          ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
+          make -j$(nproc) && sudo make altinstall
+          sudo ln -sf /usr/local/bin/python2.7 /usr/bin/python2
+          cd .. && rm -rf Python-2.7.18*
 
       - name: "🌟 Clone kernel source"
         working-directory: "./${{ env.kernelDir }}"
-        run: git clone --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
+        run: git clone --recursive --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
 
       - name: "💫 Get toolchains & Fix PATH"
         working-directory: "./${{ env.kernelDir }}"
@@ -64,10 +73,19 @@ jobs:
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
-            echo "📥 Clonando $name..."
+            
+            echo "📥 Clonando $name desde $repo..."
+            # Fallback: si falla la rama, clona la default
             git clone --branch "$branch" "$repo" "$name" --depth=1 || git clone "$repo" "$name" --depth=1
+            
             BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
-            [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
+            if [ -n "$BIN_PATH" ]; then
+              echo "✅ PATH detectado: $BIN_PATH"
+              echo "$BIN_PATH" >> $GITHUB_PATH
+            else
+              echo "✅ PATH detectado (raíz): $(pwd)/$name"
+              echo "$(pwd)/$name" >> $GITHUB_PATH
+            fi
           done
 
       - name: "😎 Set args"
@@ -76,10 +94,10 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
+          args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
-            [ "$val" != "null" ] && args="$args $key=$val"
+            if [ "$val" != "null" ]; then args="$args $key=$val"; fi
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
@@ -88,11 +106,22 @@ jobs:
         run: |
           CONF_NAME="${{ matrix.repos.kernelSource.device }}_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
+
+          if [ -z "$CONF_PATH" ]; then
+            echo "❌ ERROR: No se encontró $CONF_NAME"
+            exit 1
+          fi
+
+          echo "✅ Usando: $CONF_PATH"
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
+          
+          # Compilación limpia
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-Pure-B119-V5-${{ github.run_number }}"
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
+          name: "Kernel-Pure-B119-V4-${{ github.run_number }}"
+          path: |
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
+            ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

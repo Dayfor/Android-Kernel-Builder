@@ -41,7 +41,6 @@ jobs:
       kernelBranch: ${{ matrix.repos.kernelSource.branch }}
       kernelDevice: ${{ matrix.repos.kernelSource.device }}
       DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.device }}_defconfig
-      withKernelSU: ${{ matrix.repos.withKernelSU }}
     steps:
       - name: "✨ Create working dir"
         run: mkdir -p $kernelDir
@@ -66,10 +65,8 @@ jobs:
             repo=$(jq -r ".[$i].repo" toolchains.json)
             branch=$(jq -r ".[$i].branch" toolchains.json)
             git clone --branch $branch $repo $name --depth=1
-            BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
-            if [ -n "$BIN_PATH" ]; then
-              echo "$BIN_PATH" >> $GITHUB_PATH
-            fi
+            # Añadir al PATH buscando la carpeta bin
+            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
 
       - name: "😎 Set args"
@@ -79,11 +76,11 @@ jobs:
           echo '${{ toJSON(matrix.repos.params) }}' > params.json
           ARCH=$(jq -r ".ARCH" params.json)
           echo "ARCH=$ARCH" >> $GITHUB_ENV
+          # Construir argumentos de make
           args="-j$(nproc --all) O=$(pwd)/${{ env.OUT_DIR }} ARCH=$ARCH LLVM=1 LLVM_IAS=1"
-          args="$args CC=clang CLANG_TRIPLE=$(jq -r ".CLANG_TRIPLE" params.json)"
+          args="$args CLANG_TRIPLE=$(jq -r ".CLANG_TRIPLE" params.json)"
           args="$args CROSS_COMPILE=$(jq -r ".CROSS_COMPILE" params.json)"
           args="$args CROSS_COMPILE_ARM32=$(jq -r ".CROSS_COMPILE_COMPAT" params.json)"
-          args="$args AR=$(jq -r ".AR" params.json)"
           echo "args=$args" >> $GITHUB_OUTPUT
 
       - name: "🔧 Sync & Patch Kernel"
@@ -92,24 +89,25 @@ jobs:
           # 1. Parche para orphan-handling
           find . -type f \( -name "Makefile" -o -name "Kbuild" -o -name "*.mak" \) -exec sed -i 's/--orphan-handling=warn//g' {} + || true
           
-          # 2. Localizar defconfig de forma agresiva
-          CONF_PATH=$(find arch/arm64/configs -name "${{ env.DEFCONFIG_NAME }}" | head -n 1)
-          if [ -z "$CONF_PATH" ]; then
-            CONF_PATH="arch/arm64/configs/defconfig"
+          # 2. Localizar defconfig (prioridad a vendor/)
+          if [ -f "arch/arm64/configs/vendor/${{ env.DEFCONFIG_NAME }}" ]; then
+            CONF_PATH="vendor/${{ env.DEFCONFIG_NAME }}"
+          else
+            CONF_PATH=$(find arch/arm64/configs -name "${{ env.DEFCONFIG_NAME }}" | head -n 1 | sed 's|arch/arm64/configs/||')
           fi
           
-          echo "Defconfig encontrado en: $CONF_PATH"
-          cp $CONF_PATH arch/arm64/configs/final_defconfig
-          
+          if [ -z "$CONF_PATH" ]; then CONF_PATH="defconfig"; fi
+          echo "FINAL_CONF=$CONF_PATH" >> $GITHUB_ENV
+
           # 3. Inyectar CMDLINE personalizada
           MY_CMDLINE="androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
           chmod +x scripts/config
-          ./scripts/config --file arch/arm64/configs/final_defconfig --set-str CONFIG_CMDLINE "$MY_CMDLINE"
-          ./scripts/config --file arch/arm64/configs/final_defconfig --enable CONFIG_CMDLINE_EXTEND
+          ./scripts/config --file arch/arm64/configs/$CONF_PATH --set-str CONFIG_CMDLINE "$MY_CMDLINE"
+          ./scripts/config --file arch/arm64/configs/$CONF_PATH --enable CONFIG_CMDLINE_EXTEND
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} final_defconfig
+        run: make ${{ steps.generate-args.outputs.args }} ${{ env.FINAL_CONF }}
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}

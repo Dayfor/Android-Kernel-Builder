@@ -1,11 +1,11 @@
-name: "Build kernels #134 - Alcatraz Nuclear"
+name: "Build kernels #134 - Alcatraz Surgical"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Alcatraz Nuclear Build"
+    name: "🚀 V60 Surgical Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
@@ -24,19 +24,21 @@ jobs:
           git clone --branch main https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1 || \
           git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "☢️ Neutralizando Techpack (Nuclear Fix)"
+      - name: "✂️ Extirpación de Techpack del Makefile"
         working-directory: ./kernel_src
         run: |
-          # El error ocurre porque el Makefile principal llama a techpack sí o sí.
-          # Vamos a vaciar la carpeta y poner un Makefile que no haga nada.
-          rm -rf techpack/*
-          mkdir -p techpack/audio techpack/display techpack/camera
-          echo "obj-y := " > techpack/Kbuild
-          echo "obj-y := " > techpack/Makefile
-          echo "all:" > techpack/audio/Makefile
-          echo "clean:" >> techpack/audio/Makefile
+          # Eliminamos las líneas que obligan a compilar techpack del Makefile principal
+          # Esto evita que el compilador siquiera intente mirar esa carpeta
+          sed -i '/techpack/d' Makefile
+          
+          # También lo eliminamos de scripts/Makefile.build por si acaso
+          if [ -f scripts/Makefile.build ]; then
+            sed -i '/techpack/d' scripts/Makefile.build
+          fi
+          
+          echo "✅ Techpack eliminado del flujo de construcción."
 
-      - name: "🔧 Hotfixes de Kernel"
+      - name: "🔧 Hotfixes de Compatibilidad"
         working-directory: ./kernel_src
         run: |
           # Fix MMU Notifier (Esencial para Clang 14+)
@@ -59,7 +61,7 @@ jobs:
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH"
           make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
           
-          # Aseguramos que no intente buscar módulos de techpack en la config
+          # Aseguramos que la config esté limpia
           sed -i 's/CONFIG_TECHPACK=y/CONFIG_TECHPACK=n/g' .config
           make $ARGS olddefconfig
 
@@ -70,7 +72,7 @@ jobs:
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
           
-          # Compilamos la imagen directamente
+          # Compilamos directamente la imagen del kernel
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
       - name: "📦 Exportar Artefactos"
@@ -84,5 +86,5 @@ jobs:
       - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Alcatraz-Nuclear-A15"
+          name: "Kernel-V60-Alcatraz-Surgical-A15"
           path: dist/

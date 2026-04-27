@@ -1,7 +1,4 @@
-name: "Build kernels #134 - Lineage 23.2"
-
-env:
-  CONFIGURATION: "repos.json"
+name: "Build kernels #134 - Lineage 23.2 Fix"
 
 on:
   workflow_dispatch:
@@ -17,46 +14,42 @@ jobs:
       - name: "📦 Dependencias"
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential curl git git-lfs libpcre3-dev \
+          sudo apt-get install -y bc build-essential curl git libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-          checkpolicy bison flex libncurses5-dev python3 libarchive-tools
+          checkpolicy bison flex libncurses5-dev python3 libarchive-tools wget
 
       - name: "🌟 Clonando Fuente (Rama 23.2)"
         run: |
-          # Clonamos específicamente la rama de Android 16
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "💫 Setup Toolchains"
+      - name: "💫 Setup Clang (Google Official)"
         run: |
-          git clone --branch lineage-20 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b1 clang --depth=1
-          git clone --branch lineage-19.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64 --depth=1
-          
-          echo "$(pwd)/clang/bin" >> $GITHUB_PATH
-          echo "$(pwd)/gcc64/bin" >> $GITHUB_PATH
-          echo "LD_LIBRARY_PATH=$(pwd)/clang/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          # Descargamos Clang R416183b1 directamente desde los servidores de Google
+          mkdir -p clang
+          cd clang
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r416183b1.tar.gz
+          tar -xf clang-r416183b1.tar.gz
+          echo "$(pwd)/bin" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=$(pwd)/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      - name: "🛠️ Compilación"
+      - name: "🛠️ Compilación Final"
         working-directory: ./kernel_src
         run: |
+          # Argumentos de compilación
           ARGS="ARCH=arm64 \
                 CC=clang \
                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                CROSS_COMPILE=aarch64-linux-android- \
-                CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-                LD=ld.lld \
-                AR=llvm-ar \
-                NM=llvm-nm \
-                OBJCOPY=llvm-objcopy \
-                OBJDUMP=llvm-objdump \
-                STRIP=llvm-strip"
+                CROSS_COMPILE=aarch64-linux-gnu- \
+                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+                LLVM=1 \
+                LLVM_IAS=1"
           
           echo "📝 Configurando con defconfig..."
-          # Usamos el archivo que encontraste en la rama 23.2
           make $ARGS defconfig
           
           echo "🚀 Iniciando build..."
-          # KCFLAGS para evitar que errores de visibilidad detengan la build en Android 16
-          make -j$(nproc --all) $ARGS KCFLAGS="-fno-limit-debug-info -Wno-error"
+          # Usamos KCFLAGS para saltar errores de visibilidad
+          make -j$(nproc --all) $ARGS KCFLAGS="-Wno-error"
 
       - name: "📦 Exportar"
         if: always()
@@ -67,7 +60,7 @@ jobs:
             find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
           fi
 
-      - name: "📤 Upload Artifacts"
+      - name: "📤 Subiendo Artefactos"
         uses: actions/upload-artifact@v4
         with:
           name: "Kernel-V60-L23.2-B134"

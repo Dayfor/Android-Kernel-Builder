@@ -1,4 +1,4 @@
-name: "Build kernels #123 - NTSYNC Export Fix"
+name: "Build kernels #123 - NTSYNC Final"
 
 env:
   CONFIGURATION: "repos.json"
@@ -69,12 +69,23 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Apply NTSYNC Patch"
+      - name: "💉 Integrate NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          wget -q "https://raw.githubusercontent.com/liyafe1997/ntsync-backport/main/ntsync-4.19.patch" -O ntsync.patch
-          if [ -f ntsync.patch ]; then
-            patch -p1 < ntsync.patch || echo "Patch already applied or failed"
+          echo "📥 Descargando código de ntsync..."
+          # Usamos un archivo comprimido para evitar errores de clonado/git
+          curl -L https://github.com/liyafe1997/ntsync-backport/archive/refs/heads/main.zip -o ntsync.zip
+          unzip ntsync.zip
+          
+          echo "🛠️ Copiando archivos al árbol del kernel..."
+          cp ntsync-backport-main/drivers/misc/ntsync.c drivers/misc/
+          cp ntsync-backport-main/include/uapi/linux/ntsync.h include/uapi/linux/
+          
+          echo "📝 Modificando Makefile y Kconfig..."
+          grep -q "ntsync.o" drivers/misc/Makefile || echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
+          
+          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
+            printf "\nconfig NTSYNC\n\ttristate \"NTSYNC support\"\n\thelp\n\t  Support for Windows-style synchronization primitives.\n" >> drivers/misc/Kconfig
           fi
 
       - name: "😎 Set args"
@@ -92,7 +103,6 @@ jobs:
           echo "args=$args" >> $GITHUB_OUTPUT
 
       - name: "🛠️ Compilación y Extracción"
-        id: build
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           CONF_NAME="timelm_defconfig"
@@ -103,29 +113,12 @@ jobs:
           
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
           
-          # Crear carpeta dist en la raíz del espacio de trabajo
           mkdir -p ${{ github.workspace }}/dist
-          
-          # BUSQUEDA AGRESIVA: Buscamos el archivo Image y lo movemos
-          IMAGE_FILE=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -type f | head -n 1)
-          DTBO_FILE=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -type f | head -n 1)
-          
-          if [ -n "$IMAGE_FILE" ]; then
-            cp "$IMAGE_FILE" ${{ github.workspace }}/dist/
-            echo "✅ Image copiada a dist/"
-          else
-            echo "❌ ERROR: No se encontró el archivo Image generado"
-            exit 1
-          fi
-          
-          if [ -n "$DTBO_FILE" ]; then
-            cp "$DTBO_FILE" ${{ github.workspace }}/dist/
-            echo "✅ dtbo.img copiado a dist/"
-          fi
+          find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -exec cp {} ${{ github.workspace }}/dist/ \;
+          find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -exec cp {} ${{ github.workspace }}/dist/ \;
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-NTSYNC-${{ github.run_number }}"
+          name: "Kernel-LGE-NTSYNC-Final"
           path: dist/
-          if-no-files-found: error

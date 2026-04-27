@@ -1,11 +1,11 @@
-name: "Build kernels #134 - Alcatraz Clean"
+name: "Build kernels #134 - Alcatraz Nuclear"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Alcatraz Clean Build"
+    name: "🚀 V60 Alcatraz Nuclear Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
@@ -24,10 +24,22 @@ jobs:
           git clone --branch main https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1 || \
           git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🔧 Hotfixes de Compatibilidad"
+      - name: "☢️ Neutralizando Techpack (Nuclear Fix)"
         working-directory: ./kernel_src
         run: |
-          # 1. Fix MMU Notifier
+          # El error ocurre porque el Makefile principal llama a techpack sí o sí.
+          # Vamos a vaciar la carpeta y poner un Makefile que no haga nada.
+          rm -rf techpack/*
+          mkdir -p techpack/audio techpack/display techpack/camera
+          echo "obj-y := " > techpack/Kbuild
+          echo "obj-y := " > techpack/Makefile
+          echo "all:" > techpack/audio/Makefile
+          echo "clean:" >> techpack/audio/Makefile
+
+      - name: "🔧 Hotfixes de Kernel"
+        working-directory: ./kernel_src
+        run: |
+          # Fix MMU Notifier (Esencial para Clang 14+)
           python3 -c "
           import sys
           path = 'include/linux/mmu_notifier.h'
@@ -37,23 +49,18 @@ jobs:
               content = content.replace('struct mmu_notifier_range {', insertion + 'struct mmu_notifier_range {')
               with open(path, 'w') as f: f.write(content)
           "
-          
-          # 2. Desactivar Werror globalmente
+          # Desactivar Werror
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
-      - name: "🛠️ Configuración y Limpieza de Defconfig"
+      - name: "🛠️ Configuración"
         working-directory: ./kernel_src
         run: |
           LLD_PATH=$(which ld.lld)
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH"
-          
-          # Cargar la configuración base
           make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
           
-          # DESACTIVAR TECHPACK: Esto evita el error en techpack/audio
-          echo "CONFIG_TECHPACK=n" >> .config
-          echo "CONFIG_MSM_AUDIO_ION=n" >> .config
-          # Forzar regeneración de la config sin los módulos problemáticos
+          # Aseguramos que no intente buscar módulos de techpack en la config
+          sed -i 's/CONFIG_TECHPACK=y/CONFIG_TECHPACK=n/g' .config
           make $ARGS olddefconfig
 
       - name: "🚀 Compilación Final"
@@ -61,10 +68,9 @@ jobs:
         run: |
           LLD_PATH=$(which ld.lld)
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-          
           KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
           
-          # Compilar directamente el kernel
+          # Compilamos la imagen directamente
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
       - name: "📦 Exportar Artefactos"
@@ -78,6 +84,5 @@ jobs:
       - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Alcatraz-Clean"
+          name: "Kernel-V60-Alcatraz-Nuclear-A15"
           path: dist/
-

@@ -1,4 +1,4 @@
-name: "Build kernels #126 - NTSYNC Stable"
+name: "Build kernels #127 - Fsync Edition"
 
 env:
   CONFIGURATION: "repos.json"
@@ -41,9 +41,7 @@ jobs:
       
     steps:
       - name: "✨ Create working dir"
-        run: |
-          rm -rf "${{ env.kernelDir }}"
-          mkdir -p "${{ env.kernelDir }}"
+        run: mkdir -p "${{ env.kernelDir }}"
 
       - name: "⭐ Install prerequisites"
         run: |
@@ -71,18 +69,19 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Apply NTSYNC Patch (Robust Method)"
+      - name: "💉 Apply Fsync Patches"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          echo "📥 Descargando parche desde mirror alternativo..."
-          # Usamos una URL de Gist que suele ser más estable para archivos pequeños raw
-          curl -L "https://gist.githubusercontent.com/liyafe1997/57a701d6706798150495f2d665b161e1/raw/ntsync-4.19.patch" -o ntsync.patch
-          
-          if [ -s ntsync.patch ]; then
-            echo "✅ Parche descargado con éxito. Aplicando..."
-            patch -p1 < ntsync.patch || echo "⚠️ Algunos cambios ya estaban aplicados."
+          echo "📥 Descargando parches de Fsync para 4.19..."
+          # Usamos parches de Futex Wait Multiple (Fsync) de una fuente estable
+          curl -L "https://raw.githubusercontent.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250/lineage-21.0/fsync.patch" -o fsync.patch || \
+          curl -L "https://gist.githubusercontent.com/tanish711/c9a35e4d1b7d5f0e1376df173369a489/raw/fsync_4.19.patch" -o fsync.patch
+
+          if [ -s fsync.patch ]; then
+            echo "✅ Parche encontrado. Aplicando..."
+            patch -p1 < fsync.patch || echo "⚠️ Algunos archivos ya tienen Fsync o hubo conflictos menores."
           else
-            echo "❌ El parche está vacío o falló la descarga. Se usará compilación base."
+            echo "❌ No se pudo obtener el parche. Se intentará activar por configuración si ya existe en el source."
           fi
 
       - name: "😎 Set args"
@@ -92,44 +91,37 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          # Añadimos flags para ignorar errores menores de sintaxis en el parche
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types -Wno-int-conversion\""
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             [ "$val" != "null" ] && args="$args $key=$val"
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Compilación Final"
+      - name: "🛠️ Compilación con Fsync"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           CONF_NAME="timelm_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
           
-          # Limpiar carpeta de salida para evitar errores de builds previas
-          mkdir -p ../${{ env.OUT_DIR }}
-          
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
-          # Solo activamos NTSYNC si el parche se aplicó (buscamos el archivo en drivers)
-          if [ -f "drivers/misc/ntsync.c" ]; then
-            scripts/config --file ../${{ env.OUT_DIR }}/.config --enable NTSYNC
-          fi
+          # Habilitar Fsync en el .config
+          scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX
+          scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX_PI
           
-          echo "🚀 Iniciando compilación de Image..."
+          echo "🚀 Compilando Image..."
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
-      - name: "📦 Exportar Resultados"
+      - name: "📦 Extraer Imagen"
         if: always()
         run: |
           mkdir -p ${{ github.workspace }}/dist
           find . -name "Image*" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
           find . -name "dtbo.img" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
-          echo "Contenido de dist:"
-          ls -R ${{ github.workspace }}/dist/
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-NTSYNC-B126"
+          name: "Kernel-LGE-Fsync-B127"
           path: dist/

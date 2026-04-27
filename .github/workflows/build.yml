@@ -1,4 +1,4 @@
-name: Build LG SM8250 Kernel (Android 15)
+name: Build LG SM8250 Kernel (Direct)
 
 on:
   workflow_dispatch:
@@ -7,38 +7,39 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Builder
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Environment
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison git python3 libssl-dev libelf-dev libarchive-tools
-          
+          sudo apt-get install -y bc build-essential flex bison git python3 libssl-dev libelf-dev clang lld llvm
+
       - name: Clone Sources
         run: |
-          git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 -b 11 kernel
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main-kernel-build-2024 clang
+          git clone --depth=1 https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 -b 11 kernel
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b master-kernel-build-2021 clang
 
-      - name: Apply Android 15 & Clean Patches
+      - name: Configure Kernel with boot.img params
         run: |
           cd kernel
-          # Aplicar parches necesarios para Binder e IPC en Android 15
-          # (Aquí el script asume una compilación limpia pero preparada para las nuevas API)
-          sed -i 's/CONFIG_ANDROID_BINDER_IPC_SELFTEST=y/CONFIG_ANDROID_BINDER_IPC_SELFTEST=n/' arch/arm64/configs/vendor/timelm_defconfig
+          # Cargar la configuración base para timelm (LG SM8250)
+          make O=out vendor/timelm_defconfig
+          
+          # Aplicar ajustes específicos extraídos de tu boot.img
+          scripts/config --objtree out --set-str CONFIG_CMDLINE "androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
+          scripts/config --objtree out --enable CONFIG_CMDLINE_EXTEND
+          
+          # Asegurar que el kernel no falle por flags de linker modernos (basado en tu error anterior)
+          sed -i 's/--orphan-handling=warn//g' scripts/Makefile.extrawarn || true
 
-      - name: Kernel Build
+      - name: Compilation
         run: |
           cd kernel
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           export ARCH=arm64
           export SUBARCH=arm64
-          export KBUILD_BUILD_USER="Dayfor"
-          export KBUILD_BUILD_HOST="BuildServer"
           
-          make O=out vendor/timelm_defconfig
-          
-          # Compilación usando LLVM y Clang para máxima compatibilidad con A15
           make -j$(nproc --all) O=out \
             CC=clang \
             LD=ld.lld \
@@ -49,15 +50,11 @@ jobs:
             STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LLVM=1
 
-      - name: Pack Kernel
-        run: |
-          # Empaquetado básico de la imagen resultante
-          cp kernel/out/arch/arm64/boot/Image.gz-dtb .
-          
-      - name: Upload Artifact
+      - name: Upload Kernel
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_LG_SM8250_A15
-          path: Image.gz-dtb
+          name: Image.gz-dtb-SM8250
+          path: kernel/out/arch/arm64/boot/Image.gz-dtb

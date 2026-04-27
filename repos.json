@@ -4,8 +4,7 @@
       "name": "android_kernel_lge_sm8250",
       "device": "timelm",
       "repo": "https://github.com/LineageOS/android_kernel_lge_sm8250",
-      "branch": "lineage-21",
-      "version": "23.2"
+      "branch": "lineage-21"
     }
   }
 ]

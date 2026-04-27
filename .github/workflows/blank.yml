@@ -1,0 +1,99 @@
+name: "Build kernels #119 - Pure Test v5"
+
+env:
+  CONFIGURATION: "repos.json"
+  OUT_DIR: "out"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  Set-repos: 
+    name: "🐂 Parse repos.json"
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.generate-matrix.outputs.repos }}
+    steps:
+      - name: "😄 Checkout"
+        uses: actions/checkout@v4
+      - name: "😆 Generate Matrix"
+        id: generate-matrix
+        run: |
+          echo "repos<<EOF" >> $GITHUB_OUTPUT
+          cat ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  Build-Kernel:
+    name: "🐎 Build kernel (Pure)"
+    runs-on: ubuntu-latest
+    needs: - Set-repos
+    strategy:
+      max-parallel: 2
+      fail-fast: true
+      matrix:
+        repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
+    env:
+      kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
+      kernelName: "${{ matrix.repos.kernelSource.name }}"
+      kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
+      kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
+      
+    steps:
+      - name: "✨ Create working dir"
+        run: mkdir -p "${{ env.kernelDir }}"
+
+      - name: "⭐ Install prerequisites"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
+          libarchive-tools ncurses-dev bison flex libelf-dev
+
+      - name: "🌟 Clone kernel source"
+        working-directory: "./${{ env.kernelDir }}"
+        run: git clone --branch "${{ env.kernelBranch }}" "${{ env.kernelRepo }}" "${{ env.kernelName }}" --depth=1
+
+      - name: "💫 Get toolchains & Fix PATH"
+        working-directory: "./${{ env.kernelDir }}"
+        env:
+          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
+        run: |
+          toolchains_num=$(echo "$toolchains" | jq 'length')
+          for ((i=0;i<toolchains_num;i++)); do
+            name=$(echo "$toolchains" | jq -r ".[$i].name")
+            repo=$(echo "$toolchains" | jq -r ".[$i].repo")
+            branch=$(echo "$toolchains" | jq -r ".[$i].branch")
+            echo "📥 Clonando $name..."
+            git clone --branch "$branch" "$repo" "$name" --depth=1 || git clone "$repo" "$name" --depth=1
+            BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
+            [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
+          done
+
+      - name: "😎 Set args"
+        id: generate-args
+        working-directory: "./${{ env.kernelDir }}"
+        env:
+          params: "${{ toJSON(matrix.repos.params) }}"
+        run: |
+          args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
+          for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
+            val=$(echo "$params" | jq -r ".$key")
+            [ "$val" != "null" ] && args="$args $key=$val"
+          done
+          echo "args=$args" >> $GITHUB_OUTPUT
+
+      - name: "🛠️ Compilación Final"
+        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
+        run: |
+          CONF_NAME="${{ matrix.repos.kernelSource.device }}_defconfig"
+          CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
+          make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
+          make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
+
+      - name: "📤 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Kernel-Pure-B119-V5-${{ github.run_number }}"
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
+          

@@ -1,4 +1,4 @@
-name: "Build kernels #124 - NTSYNC & Path Fix"
+name: "Build kernels #124 - NTSYNC Final Fix"
 
 env:
   CONFIGURATION: "repos.json"
@@ -69,16 +69,17 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Integrate NTSYNC"
+      - name: "💉 Integrate NTSYNC (No-Auth Method)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          echo "📥 Descargando código de ntsync..."
-          # Usamos un clonado de una sola rama sin historial para evitar errores de red
-          git clone --depth 1 https://github.com/liyafe1997/ntsync-backport.git ../ntsync_source
+          echo "📥 Descargando ntsync vía Tarball (Evita Error 128)..."
+          curl -sL https://api.github.com/repos/liyafe1997/ntsync-backport/tarball/main -o ntsync.tar.gz
+          mkdir -p ntsync_src
+          tar -xzf ntsync.tar.gz -C ntsync_src --strip-components=1
           
-          echo "🛠️ Copiando archivos..."
-          cp ../ntsync_source/drivers/misc/ntsync.c drivers/misc/
-          cp ../ntsync_source/include/uapi/linux/ntsync.h include/uapi/linux/
+          echo "🛠️ Inyectando archivos en el kernel..."
+          cp ntsync_src/drivers/misc/ntsync.c drivers/misc/
+          cp ntsync_src/include/uapi/linux/ntsync.h include/uapi/linux/
           
           echo "📝 Registrando driver..."
           grep -q "ntsync.o" drivers/misc/Makefile || echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
@@ -100,7 +101,7 @@ jobs:
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Compilación y Extracción"
+      - name: "🛠️ Compilación y Extracción Directa"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           CONF_NAME="timelm_defconfig"
@@ -111,20 +112,19 @@ jobs:
           
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
           
-          # Crear carpeta dist y localizar la Image
+          # Crear carpeta dist en el workspace principal
           mkdir -p ${{ github.workspace }}/dist
-          IMAGE_PATH=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -type f | head -n 1)
-          DTBO_PATH=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -type f | head -n 1)
           
-          [ -n "$IMAGE_PATH" ] && cp "$IMAGE_PATH" ${{ github.workspace }}/dist/
-          [ -n "$DTBO_PATH" ] && cp "$DTBO_PATH" ${{ github.workspace }}/dist/
+          # Copiado agresivo
+          echo "📦 Buscando binarios finales..."
+          find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
+          find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
           
-          echo "✅ Contenido de dist:"
-          ls -l ${{ github.workspace }}/dist/
+          echo "✅ Contenido de carpeta dist antes de subir:"
+          ls -lh ${{ github.workspace }}/dist/
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-NTSYNC-B124"
+          name: "Kernel-LGE-NTSYNC-B124-OK"
           path: dist/
-

@@ -1,4 +1,4 @@
-name: "Build kernels #123 - NTSYNC Final"
+name: "Build kernels #124 - NTSYNC & Path Fix"
 
 env:
   CONFIGURATION: "repos.json"
@@ -73,17 +73,15 @@ jobs:
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           echo "📥 Descargando código de ntsync..."
-          # Usamos un archivo comprimido para evitar errores de clonado/git
-          curl -L https://github.com/liyafe1997/ntsync-backport/archive/refs/heads/main.zip -o ntsync.zip
-          unzip ntsync.zip
+          # Usamos un clonado de una sola rama sin historial para evitar errores de red
+          git clone --depth 1 https://github.com/liyafe1997/ntsync-backport.git ../ntsync_source
           
-          echo "🛠️ Copiando archivos al árbol del kernel..."
-          cp ntsync-backport-main/drivers/misc/ntsync.c drivers/misc/
-          cp ntsync-backport-main/include/uapi/linux/ntsync.h include/uapi/linux/
+          echo "🛠️ Copiando archivos..."
+          cp ../ntsync_source/drivers/misc/ntsync.c drivers/misc/
+          cp ../ntsync_source/include/uapi/linux/ntsync.h include/uapi/linux/
           
-          echo "📝 Modificando Makefile y Kconfig..."
+          echo "📝 Registrando driver..."
           grep -q "ntsync.o" drivers/misc/Makefile || echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
-          
           if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
             printf "\nconfig NTSYNC\n\ttristate \"NTSYNC support\"\n\thelp\n\t  Support for Windows-style synchronization primitives.\n" >> drivers/misc/Kconfig
           fi
@@ -95,7 +93,7 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-format-insufficient-args -Wno-return-type -fno-strict-aliasing -Wno-incompatible-function-pointer-types\""
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-format-insufficient-args -Wno-return-type -fno-strict-aliasing\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             [ "$val" != "null" ] && args="$args $key=$val"
@@ -113,12 +111,20 @@ jobs:
           
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
           
+          # Crear carpeta dist y localizar la Image
           mkdir -p ${{ github.workspace }}/dist
-          find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -exec cp {} ${{ github.workspace }}/dist/ \;
-          find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -exec cp {} ${{ github.workspace }}/dist/ \;
+          IMAGE_PATH=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "Image*" -type f | head -n 1)
+          DTBO_PATH=$(find ../${{ env.OUT_DIR }}/arch/arm64/boot/ -name "dtbo.img" -type f | head -n 1)
+          
+          [ -n "$IMAGE_PATH" ] && cp "$IMAGE_PATH" ${{ github.workspace }}/dist/
+          [ -n "$DTBO_PATH" ] && cp "$DTBO_PATH" ${{ github.workspace }}/dist/
+          
+          echo "✅ Contenido de dist:"
+          ls -l ${{ github.workspace }}/dist/
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-NTSYNC-Final"
+          name: "Kernel-LGE-NTSYNC-B124"
           path: dist/
+

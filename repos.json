@@ -4,7 +4,7 @@
       "name": "kernel_lge_sm8250",
       "device": "timelm",
       "repo": "https://github.com/LineageOS/android_kernel_lge_sm8250",
-      "branch": "lineage-21.0"
+      "branch": "lineage-20"
     },
     "toolchains": [
       {

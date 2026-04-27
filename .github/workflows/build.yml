@@ -1,4 +1,4 @@
-name: "Build kernels #127 - Fsync Edition"
+name: "Build kernels #128 - Fsync Stable"
 
 env:
   CONFIGURATION: "repos.json"
@@ -41,7 +41,9 @@ jobs:
       
     steps:
       - name: "✨ Create working dir"
-        run: mkdir -p "${{ env.kernelDir }}"
+        run: |
+          rm -rf "${{ env.kernelDir }}"
+          mkdir -p "${{ env.kernelDir }}"
 
       - name: "⭐ Install prerequisites"
         run: |
@@ -69,19 +71,14 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Apply Fsync Patches"
+      - name: "💉 Apply Fsync (Futex Wait Multiple)"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          echo "📥 Descargando parches de Fsync para 4.19..."
-          # Usamos parches de Futex Wait Multiple (Fsync) de una fuente estable
-          curl -L "https://raw.githubusercontent.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250/lineage-21.0/fsync.patch" -o fsync.patch || \
-          curl -L "https://gist.githubusercontent.com/tanish711/c9a35e4d1b7d5f0e1376df173369a489/raw/fsync_4.19.patch" -o fsync.patch
-
+          echo "📥 Descargando parche Fsync compatible..."
+          curl -LSs "https://raw.githubusercontent.com/tanish711/c9a35e4d1b7d5f0e1376df173369a489/raw/fsync_4.19.patch" -o fsync.patch
+          
           if [ -s fsync.patch ]; then
-            echo "✅ Parche encontrado. Aplicando..."
-            patch -p1 < fsync.patch || echo "⚠️ Algunos archivos ya tienen Fsync o hubo conflictos menores."
-          else
-            echo "❌ No se pudo obtener el parche. Se intentará activar por configuración si ya existe en el source."
+            patch -p1 < fsync.patch || echo "⚠️ Fallo parcial, continuando..."
           fi
 
       - name: "😎 Set args"
@@ -91,29 +88,30 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types\""
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types -Wno-return-type\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             [ "$val" != "null" ] && args="$args $key=$val"
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Compilación con Fsync"
+      - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           CONF_NAME="timelm_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
           
+          # Generar configuración base
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
-          # Habilitar Fsync en el .config
+          # Habilitar Futex y Fsync de forma nativa
           scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX
           scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX_PI
           
-          echo "🚀 Compilando Image..."
+          echo "🚀 Iniciando compilación de Image..."
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
-      - name: "📦 Extraer Imagen"
+      - name: "📦 Exportar Imagen"
         if: always()
         run: |
           mkdir -p ${{ github.workspace }}/dist
@@ -123,5 +121,5 @@ jobs:
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-Fsync-B127"
+          name: "Kernel-LGE-Fsync-B128"
           path: dist/

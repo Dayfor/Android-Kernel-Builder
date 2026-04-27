@@ -1,4 +1,4 @@
-name: "Build kernels #129 - Fsync Offline"
+name: "Build kernels #130 - Stable Extraction"
 
 env:
   CONFIGURATION: "repos.json"
@@ -40,8 +40,10 @@ jobs:
       kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
       
     steps:
-      - name: "✨ Create working dir"
-        run: mkdir -p "${{ env.kernelDir }}"
+      - name: "✨ Clean & Create working dir"
+        run: |
+          rm -rf "${{ env.kernelDir }}"
+          mkdir -p "${{ env.kernelDir }}"
 
       - name: "⭐ Install prerequisites"
         run: |
@@ -69,31 +71,6 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Apply Fsync (Internal Patch)"
-        working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
-        run: |
-          echo "📝 Aplicando parche Fsync interno..."
-          # Este es un parche simplificado de Futex Wait Multiple para kernels 4.19
-          cat << 'EOF' > fsync_internal.patch
-          --- a/kernel/futex.c
-          +++ b/kernel/futex.c
-          @@ -2824,6 +2824,40 @@
-           	return ret;
-           }
-           
-          +SYSCALL_DEFINE4(futex_wait_multiple, struct futex_wait_block __user *, ubase,
-          +		unsigned int, count, unsigned int, flags,
-          +		struct __kernel_timespec __user *, utime)
-          +{
-          +	return 0; /* Stub para evitar error de compilación */
-          +}
-          +
-           SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
-           		struct __kernel_timespec __user *, utime, u32 __user *, uaddr2,
-           		u32, val3)
-          EOF
-          patch -p1 < fsync_internal.patch || echo "⚠️ Patch failed, skipping to config"
-
       - name: "😎 Set args"
         id: generate-args
         working-directory: "./${{ env.kernelDir }}"
@@ -101,37 +78,44 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types\""
+          # Flags optimizados para evitar errores de compilación por warnings
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -fno-strict-aliasing -Wno-incompatible-function-pointer-types -Wno-unused-function\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             [ "$val" != "null" ] && args="$args $key=$val"
           done
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "🛠️ Compilación Final"
+      - name: "🛠️ Compilación Limpia"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
           CONF_NAME="timelm_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
           
+          # 1. Generar .config
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
-          # Habilitar Futex base para que Winlator pueda usar Fsync
+          # 2. Asegurar optimizaciones base
           scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX
           scripts/config --file ../${{ env.OUT_DIR }}/.config --enable FUTEX_PI
           
-          echo "🚀 Compilando Image..."
+          # 3. Compilar
+          echo "🚀 Compilando Image y dtbo..."
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
-      - name: "📦 Exportar Artefactos"
+      - name: "📦 Exportación Garantizada"
         if: always()
         run: |
           mkdir -p ${{ github.workspace }}/dist
-          find . -name "Image*" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
+          # Buscamos en todo el directorio de trabajo para no fallar por rutas relativas
+          find . -name "Image*" -type f -not -path "*/scripts/*" -exec cp {} ${{ github.workspace }}/dist/ \;
           find . -name "dtbo.img" -type f -exec cp {} ${{ github.workspace }}/dist/ \;
+          echo "✅ Contenido final en dist:"
+          ls -R ${{ github.workspace }}/dist/
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-LGE-Fsync-B129"
+          name: "Kernel-LGE-V60-B130"
           path: dist/
+          if-no-files-found: warn

@@ -19,39 +19,47 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git git-lfs libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-          checkpolicy bison flex libncurses5-dev python3
+          checkpolicy bison flex libncurses5-dev python3 libarchive-tools
 
       - name: "🌟 Clonando Fuente (Standard)"
         run: git clone --branch lineage-21.0 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
       - name: "💫 Setup Toolchains Oficiales"
         run: |
-          # Clang oficial de LineageOS
+          # Clang oficial de LineageOS (r416183b1)
           git clone --branch lineage-20 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b1 clang --depth=1
-          # GCC oficial de LineageOS (para compatibilidad de headers)
+          # GCC oficial de LineageOS (aarch64 4.9)
           git clone --branch lineage-19.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64 --depth=1
           
+          # Añadir binarios al PATH de GitHub
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
           echo "$(pwd)/gcc64/bin" >> $GITHUB_PATH
+          # Configurar variables de entorno para las librerías del compilador
+          echo "LD_LIBRARY_PATH=$(pwd)/clang/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: "🛠️ Compilación según Wiki"
         working-directory: ./kernel_src
         run: |
-          # Definimos los argumentos para usar Clang + GCC como helper (estándar de Lineage)
+          # Argumentos oficiales para kernels SM8250 en Lineage
           ARGS="ARCH=arm64 \
                 CC=clang \
                 CLANG_TRIPLE=aarch64-linux-gnu- \
                 CROSS_COMPILE=aarch64-linux-android- \
                 CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-                LLVM=1 \
-                LLVM_IAS=1"
+                LD=ld.lld \
+                AR=llvm-ar \
+                NM=llvm-nm \
+                OBJCOPY=llvm-objcopy \
+                OBJDUMP=llvm-objdump \
+                STRIP=llvm-strip"
           
-          echo "📝 Configurando dispositivo timelm..."
-          # En la rama 21.0 el nombre suele volver a vendor/timelm-perf_defconfig
+          echo "📝 Configurando..."
+          # Intentamos las rutas conocidas de configs para timelm
           make $ARGS vendor/timelm-perf_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
           
           echo "🚀 Iniciando build pura..."
-          make -j$(nproc --all) $ARGS
+          # Ignoramos warnings de visibilidad que rompen Clang moderno pero no el de Lineage
+          make -j$(nproc --all) $ARGS KCFLAGS="-Wno-error"
 
       - name: "📦 Exportar"
         if: always()

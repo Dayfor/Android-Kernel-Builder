@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Lineage 23.2 Fix"
+name: "Build kernels #134 - Native Fix"
 
 on:
   workflow_dispatch:
@@ -16,26 +16,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
           libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-          checkpolicy bison flex libncurses5-dev python3 libarchive-tools wget
+          checkpolicy bison flex libncurses5-dev python3 libarchive-tools
 
       - name: "🌟 Clonando Fuente (Rama 23.2)"
         run: |
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "💫 Setup Clang (Google Official)"
-        run: |
-          # Descargamos Clang R416183b1 directamente desde los servidores de Google
-          mkdir -p clang
-          cd clang
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r416183b1.tar.gz
-          tar -xf clang-r416183b1.tar.gz
-          echo "$(pwd)/bin" >> $GITHUB_PATH
-          echo "LD_LIBRARY_PATH=$(pwd)/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-
-      - name: "🛠️ Compilación Final"
+      - name: "🛠️ Compilación con Clang Nativo"
         working-directory: ./kernel_src
         run: |
-          # Argumentos de compilación
+          # Usamos el Clang que ya trae el sistema (Ubuntu 22.04+)
           ARGS="ARCH=arm64 \
                 CC=clang \
                 CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -47,9 +37,14 @@ jobs:
           echo "📝 Configurando con defconfig..."
           make $ARGS defconfig
           
-          echo "🚀 Iniciando build..."
-          # Usamos KCFLAGS para saltar errores de visibilidad
-          make -j$(nproc --all) $ARGS KCFLAGS="-Wno-error"
+          echo "🚀 Iniciando build con parches de compatibilidad..."
+          # Estos flags son CRUCIALES para que el Clang moderno acepte el código viejo del kernel
+          # -Wno-error: Ignora errores leves
+          # -fno-strict-aliasing: Evita errores de punteros
+          # -Wno-visibility: Salta el error del enum mmu_notifier que vimos antes
+          export KCFLAGS="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration"
+          
+          make -j$(nproc --all) $ARGS KCFLAGS="$KCFLAGS"
 
       - name: "📦 Exportar"
         if: always()
@@ -63,5 +58,5 @@ jobs:
       - name: "📤 Subiendo Artefactos"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-L23.2-B134"
+          name: "Kernel-V60-L23.2-Native"
           path: dist/

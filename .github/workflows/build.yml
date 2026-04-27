@@ -1,4 +1,4 @@
-name: "Build kernels #134 - LLD Absolute Fix"
+name: "Build kernels #134 - Final Hack"
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Instalación de Herramientas LLVM"
+      - name: "📦 Instalación de Herramientas"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -23,14 +23,11 @@ jobs:
         run: |
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🛠️ Configuración y Compilación"
+      - name: "🛠️ Compilación con Inyección de Tipos"
         working-directory: ./kernel_src
         run: |
-          # Localizamos la ruta real de ld.lld para pasarla directamente
           LLD_PATH=$(which ld.lld)
-          echo "✅ Linker encontrado en: $LLD_PATH"
-
-          # Definimos los argumentos usando rutas del sistema
+          
           ARGS="ARCH=arm64 \
                 LLVM=1 \
                 LLVM_IAS=1 \
@@ -45,12 +42,17 @@ jobs:
                 CROSS_COMPILE=aarch64-linux-gnu- \
                 CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          echo "📝 Configurando con defconfig..."
+          echo "📝 Configurando..."
           make $ARGS defconfig
           
-          echo "🚀 Iniciando build..."
-          # KCFLAGS para saltar el error de mmu_notifier y visibilidad
-          export KCFLAGS="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration"
+          echo "🚀 Iniciando build con inyección de headers..."
+          # EXPLICACIÓN DEL TRUCO:
+          # Usamos '-D' para definir el enum mmu_notifier_event globalmente.
+          # Esto engaña al compilador y le da la definición que le falta sin editar el archivo .h
+          FIX_ENUM="-Denum_mmu_notifier_event=int -DMMU_NOTIFIER_RELEASE=0 -DMMU_NOTIFIER_UNMAP=1"
+          
+          # Flags de compatibilidad agresivos
+          export KCFLAGS="$FIX_ENUM -Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration"
           
           make -j$(nproc --all) $ARGS KCFLAGS="$KCFLAGS"
 
@@ -66,5 +68,5 @@ jobs:
       - name: "📤 Subiendo Artefactos"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-L23.2-LLD-Fixed"
+          name: "Kernel-V60-L23.2-Final"
           path: dist/

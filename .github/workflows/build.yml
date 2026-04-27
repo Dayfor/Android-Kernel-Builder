@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Lineage 23.2 Final"
+name: "Build kernels #134 - Fix Mmu Notifier"
 
 env:
   CONFIGURATION: "repos.json"
@@ -11,7 +11,7 @@ jobs:
     name: "🐎 Compilando Kernel V60"
     runs-on: ubuntu-latest
     steps:
-      - name: "🧹 Limpieza de Espacio"
+      - name: "🧹 Limpieza"
         run: rm -rf *
 
       - name: "📦 Instalación de Dependencias"
@@ -29,33 +29,36 @@ jobs:
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-aosp --depth=1
           echo "$(pwd)/clang-aosp/bin" >> $GITHUB_PATH
 
+      - name: "🔧 Aplicar Fixes de Compilador"
+        working-directory: ./kernel_src
+        run: |
+          echo "🛠️ Corrigiendo mmu_notifier.h para Clang moderno..."
+          # Insertamos la definición del enum antes de la línea que da el error
+          sed -i '340i enum mmu_notifier_event { MMU_NOTIFIER_UNMAP, MMU_NOTIFIER_RELEASE, };' include/linux/mmu_notifier.h
+          
+          # Fix adicional para evitar errores de indentación en drivers de LG
+          export KCFLAGS="-Wno-error -Wno-misleading-indentation -Wno-incompatible-function-pointer-types -Wno-visibility"
+
       - name: "🛠️ Compilación Final"
         working-directory: ./kernel_src
         run: |
-          # Definimos los argumentos de compilación para Clang/LLVM
           ARGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
           
-          # CARGA DE CONFIGURACIÓN (Usando el archivo que encontraste)
-          echo "📝 Cargando arch/arm64/configs/defconfig..."
+          echo "📝 Cargando defconfig..."
           make $ARGS defconfig
           
-          # Flags para ignorar warnings y asegurar que la build no se detenga por errores menores de sintaxis
-          export KCFLAGS="-Wno-error -Wno-misleading-indentation -Wno-incompatible-function-pointer-types"
-          
           echo "🚀 Iniciando compilación de Image..."
-          make -j$(nproc --all) $ARGS
+          make -j$(nproc --all) $ARGS KCFLAGS="-Wno-error -Wno-visibility"
 
-      - name: "📦 Organizando Archivos Finales"
+      - name: "📦 Organizando Archivos"
         if: always()
         run: |
           mkdir -p dist
           find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
           find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
-          echo "Contenido de la carpeta de salida:"
-          ls -lh dist/
 
       - name: "📤 Subiendo Artefactos"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Lineage23-B134-Final"
+          name: "Kernel-V60-Lineage23-B134-Fixed"
           path: dist/

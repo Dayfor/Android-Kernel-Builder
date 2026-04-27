@@ -89,25 +89,22 @@ jobs:
           # 1. Parche para orphan-handling
           find . -type f \( -name "Makefile" -o -name "Kbuild" -o -name "*.mak" \) -exec sed -i 's/--orphan-handling=warn//g' {} + || true
           
-          # 2. Localizar defconfig (prioridad a vendor/)
-          if [ -f "arch/arm64/configs/vendor/${{ env.DEFCONFIG_NAME }}" ]; then
-            CONF_PATH="vendor/${{ env.DEFCONFIG_NAME }}"
-          else
-            CONF_PATH=$(find arch/arm64/configs -name "${{ env.DEFCONFIG_NAME }}" | head -n 1 | sed 's|arch/arm64/configs/||')
-          fi
+          # 2. Localizar defconfig original y copiarlo a la raíz de configs con un nombre seguro
+          ORIG_CONF=$(find arch/arm64/configs -name "timelm_defconfig" | head -n 1)
+          if [ -z "$ORIG_CONF" ]; then ORIG_CONF="arch/arm64/configs/defconfig"; fi
           
-          if [ -z "$CONF_PATH" ]; then CONF_PATH="defconfig"; fi
-          echo "FINAL_CONF=$CONF_PATH" >> $GITHUB_ENV
-
+          echo "Copiando $ORIG_CONF a arch/arm64/configs/v60_defconfig"
+          cp "$ORIG_CONF" arch/arm64/configs/v60_defconfig
+          
           # 3. Inyectar CMDLINE personalizada
           MY_CMDLINE="androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
           chmod +x scripts/config
-          ./scripts/config --file arch/arm64/configs/$CONF_PATH --set-str CONFIG_CMDLINE "$MY_CMDLINE"
-          ./scripts/config --file arch/arm64/configs/$CONF_PATH --enable CONFIG_CMDLINE_EXTEND
+          ./scripts/config --file arch/arm64/configs/v60_defconfig --set-str CONFIG_CMDLINE "$MY_CMDLINE"
+          ./scripts/config --file arch/arm64/configs/v60_defconfig --enable CONFIG_CMDLINE_EXTEND
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: make ${{ steps.generate-args.outputs.args }} ${{ env.FINAL_CONF }}
+        run: make ${{ steps.generate-args.outputs.args }} v60_defconfig
 
       - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}

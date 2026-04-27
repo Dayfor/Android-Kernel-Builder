@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Legacy Clang Test"
+name: "Build kernels #134 - Wiki Standard"
 
 env:
   CONFIGURATION: "repos.json"
@@ -8,38 +8,60 @@ on:
 
 jobs:
   Build-Kernel:
-    name: "🐎 Legacy Clang Build"
+    name: "🐎 LineageOS Standard Build"
     runs-on: ubuntu-latest
     steps:
-      - name: "🧹 Clean"
+      - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Dependencies"
+      - name: "📦 Dependencias de la Wiki"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip gcc-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 jq patch \
-          libarchive-tools ncurses-dev bison flex libelf-dev clang lld llvm
+          sudo apt-get install -y bc build-essential curl git git-lfs libpcre3-dev \
+          libssl-dev lzop zlib1g-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          checkpolicy bison flex libncurses5-dev python3
 
-      - name: "🌟 Clone Source"
-        run: git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
+      - name: "🌟 Clonando Fuente (Standard)"
+        run: git clone --branch lineage-21.0 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "💫 Setup Legacy Clang"
+      - name: "💫 Setup Toolchains Oficiales"
         run: |
-          # Usamos una versión de Clang que Lineage usaba para kernels 4.19
-          git clone --branch lineage-19.1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b1 clang-stable --depth=1
-          echo "$(pwd)/clang-stable/bin" >> $GITHUB_PATH
+          # Clang oficial de LineageOS
+          git clone --branch lineage-20 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b1 clang --depth=1
+          # GCC oficial de LineageOS (para compatibilidad de headers)
+          git clone --branch lineage-19.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64 --depth=1
+          
+          echo "$(pwd)/clang/bin" >> $GITHUB_PATH
+          echo "$(pwd)/gcc64/bin" >> $GITHUB_PATH
 
-      - name: "🛠️ Compilación"
+      - name: "🛠️ Compilación según Wiki"
         working-directory: ./kernel_src
         run: |
-          # Usamos la toolchain descargada
-          ARGS="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
+          # Definimos los argumentos para usar Clang + GCC como helper (estándar de Lineage)
+          ARGS="ARCH=arm64 \
+                CC=clang \
+                CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=aarch64-linux-android- \
+                CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+                LLVM=1 \
+                LLVM_IAS=1"
           
-          make $ARGS defconfig
+          echo "📝 Configurando dispositivo timelm..."
+          # En la rama 21.0 el nombre suele volver a vendor/timelm-perf_defconfig
+          make $ARGS vendor/timelm-perf_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
           
-          # Añadimos flags de compatibilidad por si acaso, pero sin tocar archivos
-          export KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes"
-          
-          echo "🚀 Compilando con Clang Legacy..."
+          echo "🚀 Iniciando build pura..."
           make -j$(nproc --all) $ARGS
+
+      - name: "📦 Exportar"
+        if: always()
+        run: |
+          mkdir -p dist
+          find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
+          find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
+
+      - name: "📤 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Kernel-V60-Wiki-B134"
+          path: dist/

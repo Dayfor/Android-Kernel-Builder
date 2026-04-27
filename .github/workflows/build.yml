@@ -69,16 +69,24 @@ jobs:
             [ -n "$BIN_PATH" ] && echo "$BIN_PATH" >> $GITHUB_PATH || echo "$(pwd)/$name" >> $GITHUB_PATH
           done
 
-      - name: "💉 Apply NTSYNC Patches"
+      - name: "💉 Integrate NTSYNC"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          echo "📥 Descargando parches ntsync..."
-          # Usamos un set de parches compatible con kernel 4.19
-          wget https://raw.githubusercontent.com/liyafe1997/ntsync-backport/main/ntsync-4.19.patch -O ntsync.patch || \
-          wget https://github.com/zen-kernel/zen-kernel/compare/v4.19.312...v4.19.312-ntsync.patch -O ntsync.patch
+          echo "📥 Clonando backport de ntsync..."
+          git clone https://github.com/liyafe1997/ntsync-backport.git ../ntsync_source
           
-          echo "🛠️ Aplicando parche..."
-          patch -p1 < ntsync.patch || echo "⚠️ Algunos hunks fallaron, revisando..."
+          echo "🛠️ Copiando archivos..."
+          cp ../ntsync_source/drivers/misc/ntsync.c drivers/misc/
+          cp ../ntsync_source/include/uapi/linux/ntsync.h include/uapi/linux/
+          
+          echo "📝 Modificando Makefile y Kconfig..."
+          # Añadir al Makefile si no existe
+          grep -q "ntsync.o" drivers/misc/Makefile || echo "obj-\$(CONFIG_NTSYNC) += ntsync.o" >> drivers/misc/Makefile
+          
+          # Añadir al Kconfig de drivers/misc
+          if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
+            printf "\nconfig NTSYNC\n\ttristate \"NTSYNC support\"\n\thelp\n\t  Support for Windows-style synchronization primitives.\n" >> drivers/misc/Kconfig
+          fi
 
       - name: "😎 Set args"
         id: generate-args
@@ -87,7 +95,7 @@ jobs:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++"
-          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-format-insufficient-args -Wno-return-type -fno-strict-aliasing\""
+          args="$args KCFLAGS=\"-Wno-error -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-format-insufficient-args -Wno-return-type -fno-strict-aliasing -Wno-incompatible-function-pointer-types\""
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
             [ "$val" != "null" ] && args="$args $key=$val"
@@ -100,11 +108,10 @@ jobs:
           CONF_NAME="${{ matrix.repos.kernelSource.device }}_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
           
-          # Generar .config inicial
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
-          # Forzar activación de NTSYNC en el .config generado
-          echo "CONFIG_NTSYNC=y" >> ../${{ env.OUT_DIR }}/.config
+          # Forzar activación de NTSYNC
+          scripts/config --file ../${{ env.OUT_DIR }}/.config --enable NTSYNC
           
           echo "🚀 Compilando con NTSYNC..."
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }} 2>&1 | tee build_log.txt || (tail -n 150 build_log.txt && exit 1)

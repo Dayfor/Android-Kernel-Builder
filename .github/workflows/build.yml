@@ -1,11 +1,11 @@
-name: "Build kernels #134 - Alcatraz Surgical"
+name: "Build kernels #134 - Alcatraz Final Sync"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Surgical Build"
+    name: "🚀 V60 Final Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
@@ -24,34 +24,32 @@ jobs:
           git clone --branch main https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1 || \
           git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "✂️ Extirpación de Techpack del Makefile"
+      - name: "✂️ Cirugía de Makefile y Techpack"
         working-directory: ./kernel_src
         run: |
-          # Eliminamos las líneas que obligan a compilar techpack del Makefile principal
-          # Esto evita que el compilador siquiera intente mirar esa carpeta
+          # Eliminar menciones de techpack para que no intente entrar
           sed -i '/techpack/d' Makefile
-          
-          # También lo eliminamos de scripts/Makefile.build por si acaso
-          if [ -f scripts/Makefile.build ]; then
-            sed -i '/techpack/d' scripts/Makefile.build
-          fi
-          
-          echo "✅ Techpack eliminado del flujo de construcción."
+          sed -i '/techpack/d' scripts/Makefile.build
+          # Eliminar la carpeta para liberar espacio y evitar escaneos
+          rm -rf techpack
 
-      - name: "🔧 Hotfixes de Compatibilidad"
+      - name: "🔧 Inyección Maestra de MMU Notifier"
         working-directory: ./kernel_src
         run: |
-          # Fix MMU Notifier (Esencial para Clang 14+)
+          # Inyectamos el enum directamente al principio de mmu_notifier.h para que sea global
           python3 -c "
           import sys
           path = 'include/linux/mmu_notifier.h'
-          with open(path, 'r') as f: content = f.read()
-          if 'enum mmu_notifier_event' not in content:
-              insertion = '\nenum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };\n'
-              content = content.replace('struct mmu_notifier_range {', insertion + 'struct mmu_notifier_range {')
-              with open(path, 'w') as f: f.write(content)
+          with open(path, 'r') as f: lines = f.readlines()
+          # Insertar después de los primeros comentarios/includes
+          for i, line in enumerate(lines):
+              if '#define' in line or '#include' in line:
+                  lines.insert(i + 1, '\nenum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };\n')
+                  break
+          with open(path, 'w') as f: f.writelines(lines)
           "
-          # Desactivar Werror
+          
+          # Desactivar Werror agresivamente
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
       - name: "🛠️ Configuración"
@@ -61,18 +59,19 @@ jobs:
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH"
           make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
           
-          # Aseguramos que la config esté limpia
+          # Asegurar que la config no busque techpack
           sed -i 's/CONFIG_TECHPACK=y/CONFIG_TECHPACK=n/g' .config
           make $ARGS olddefconfig
 
-      - name: "🚀 Compilación Final"
+      - name: "🚀 Compilación de Imagen"
         working-directory: ./kernel_src
         run: |
           LLD_PATH=$(which ld.lld)
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          
+          # Añadimos flags para ignorar errores de tipos incompletos si persisten
           KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
           
-          # Compilamos directamente la imagen del kernel
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
       - name: "📦 Exportar Artefactos"
@@ -83,8 +82,8 @@ jobs:
           find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
           echo "androidboot.memcg=1 kpti=off cgroup.memory=nokmem,nosocket" > dist/flash_instructions.txt
 
-      - name: "📤 Subiendo Resultados"
+      - name: "📤 Subiendo"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Alcatraz-Surgical-A15"
+          name: "Kernel-V60-Alcatraz-Final"
           path: dist/

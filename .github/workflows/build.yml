@@ -1,4 +1,4 @@
-name: "Build kernels #119 - Pure Test v2"
+name: "Build kernels #119 - Pure Test v3"
 
 env:
   CONFIGURATION: "repos.json"
@@ -38,9 +38,8 @@ jobs:
     env:
       kernelDir: "${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}"
       kernelName: "${{ matrix.repos.kernelSource.name }}"
-      kernelRepo: "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250"
-      kernelBranch: "lineage-21.0"
-      kernelDevice: "timelm"
+      kernelRepo: "${{ matrix.repos.kernelSource.repo }}"
+      kernelBranch: "${{ matrix.repos.kernelSource.branch }}"
       
     steps:
       - name: "✨ Create working dir"
@@ -69,22 +68,22 @@ jobs:
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
-          export GIT_TERMINAL_PROMPT=0
           toolchains_num=$(echo "$toolchains" | jq 'length')
           for ((i=0;i<toolchains_num;i++)); do
             name=$(echo "$toolchains" | jq -r ".[$i].name")
             repo=$(echo "$toolchains" | jq -r ".[$i].repo")
             branch=$(echo "$toolchains" | jq -r ".[$i].branch")
             
-            git clone --recursive --branch "$branch" "$repo" "$name" --depth=1
+            echo "📥 Clonando $name desde $repo..."
+            git clone --branch "$branch" "$repo" "$name" --depth=1
             
-            # Búsqueda robusta de binarios
+            # Buscamos la carpeta bin de forma recursiva (vital para Clang)
             BIN_PATH=$(find $(pwd)/$name -type d -name "bin" | head -n 1)
             if [ -n "$BIN_PATH" ]; then
-              echo "✅ PATH: $BIN_PATH"
+              echo "✅ Añadiendo al PATH: $BIN_PATH"
               echo "$BIN_PATH" >> $GITHUB_PATH
             else
-              echo "✅ PATH: $(pwd)/$name"
+              echo "✅ Añadiendo al PATH: $(pwd)/$name"
               echo "$(pwd)/$name" >> $GITHUB_PATH
             fi
           done
@@ -95,7 +94,6 @@ jobs:
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
         run: |
-          # LLVM=1 indica al kernel que use las herramientas del Clang de Google
           args="ARCH=arm64 O=$(pwd)/${{ env.OUT_DIR }} LLVM=1 LLVM_IAS=1"
           for key in CROSS_COMPILE CLANG_TRIPLE CROSS_COMPILE_ARM32; do
             val=$(echo "$params" | jq -r ".$key")
@@ -106,7 +104,8 @@ jobs:
       - name: "🛠️ Compilación Final"
         working-directory: "./${{ env.kernelDir }}/${{ env.kernelName }}"
         run: |
-          CONF_NAME="timelm_defconfig"
+          # Detectar defconfig dinámicamente
+          CONF_NAME="${{ matrix.repos.kernelSource.device }}_defconfig"
           CONF_PATH=$(find arch/arm64/configs/ -name "$CONF_NAME" | sed 's|arch/arm64/configs/||' | head -n 1)
 
           if [ -z "$CONF_PATH" ]; then
@@ -114,16 +113,16 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Usando configuración original: $CONF_PATH"
+          echo "✅ Usando: $CONF_PATH"
           make ${{ steps.generate-args.outputs.args }} "$CONF_PATH"
           
-          # Sin parches, build pura para testear toolchains e ION
+          # Build pura: Sin NTSYNC y sin parches para validar el source
           make -j$(nproc --all) ${{ steps.generate-args.outputs.args }}
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-Pure-B119-${{ github.run_number }}"
+          name: "Kernel-Pure-B119-V3-${{ github.run_number }}"
           path: |
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/Image*
             ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/arm64/boot/dtbo.img

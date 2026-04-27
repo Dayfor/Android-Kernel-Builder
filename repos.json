@@ -21,10 +21,16 @@
     "params": {
       "ARCH": "arm64",
       "CC": "clang",
+      "NM": "llvm-nm",
+      "OBJCOPY": "llvm-objcopy",
+      "OBJDUMP": "llvm-objdump",
+      "STRIP": "llvm-strip",
       "CLANG_TRIPLE": "aarch64-linux-gnu-",
       "CROSS_COMPILE": "aarch64-linux-gnu-",
+      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
       "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
-      "AR": "llvm-ar"
+      "AR": "llvm-ar",
+      "LD": "ld.lld"
     },
     "withKernelSU": "false"
   }

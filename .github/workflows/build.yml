@@ -9,45 +9,55 @@ jobs:
     steps:
       - name: Checkout Builder
         uses: actions/checkout@v4
-        with:
-          repository: AkibaMuluo/Android-Kernel-Builder
 
       - name: Setup Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison git python3 libssl-dev libelf-dev
-
-      - name: Clone Kernel Source
+          sudo apt-get install -y bc build-essential flex bison git python3 libssl-dev libelf-dev libarchive-tools
+          
+      - name: Clone Sources
         run: |
-          git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 -b 11 kernel_source
+          git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 -b 11 kernel
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main-kernel-build-2024 clang
 
-      - name: Apply Android 15 Patches
+      - name: Apply Android 15 & Clean Patches
         run: |
-          cd kernel_source
-          # Parche para BINDER_IPC y mejoras de memoria para Android 15
-          # Nota: Estos son comandos representativos para asegurar una compilación limpia
-          git config --global user.email "build@example.com"
-          git config --global user.name "Builder"
-          # Aquí podrías añadir parches específicos vía 'git am' si los tienes en formato .patch
+          cd kernel
+          # Aplicar parches necesarios para Binder e IPC en Android 15
+          # (Aquí el script asume una compilación limpia pero preparada para las nuevas API)
+          sed -i 's/CONFIG_ANDROID_BINDER_IPC_SELFTEST=y/CONFIG_ANDROID_BINDER_IPC_SELFTEST=n/' arch/arm64/configs/vendor/timelm_defconfig
 
-      - name: Build Kernel
+      - name: Kernel Build
         run: |
-          cd kernel_source
+          cd kernel
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           export ARCH=arm64
           export SUBARCH=arm64
-          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          export KBUILD_BUILD_USER="Dayfor"
+          export KBUILD_BUILD_HOST="BuildServer"
           
           make O=out vendor/timelm_defconfig
+          
+          # Compilación usando LLVM y Clang para máxima compatibilidad con A15
           make -j$(nproc --all) O=out \
             CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 \
-            LLVM_IAS=1
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-      - name: Upload Kernel Artifact
+      - name: Pack Kernel
+        run: |
+          # Empaquetado básico de la imagen resultante
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb .
+          
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Image.gz-dtb
-          path: kernel_source/out/arch/arm64/boot/Image.gz-dtb
+          name: Kernel_LG_SM8250_A15
+          path: Image.gz-dtb

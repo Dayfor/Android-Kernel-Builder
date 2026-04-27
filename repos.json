@@ -3,8 +3,8 @@
     "kernelSource": {
       "name": "kernel_lge_sm8250",
       "device": "timelm",
-      "repo": "https://github.com/LineageOS/android_kernel_lge_sm8250",
-      "branch": "lineage-23.2"
+      "repo": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
+      "branch": "14"
     }
   }
 ]

@@ -1,18 +1,65 @@
-{
-  "repos": [
-    {
-      "name": "kernel",
-      "url": "https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250",
-      "branch": "lineage-21.0",
-      "target": "kernel"
-    }
-  ],
-  "toolchains": [
-    {
-      "name": "clang",
-      "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
-      "branch": "master-kernel-build-2024",
-      "target": "clang"
-    }
-  ]
-}
+name: Build LG SM8250 Kernel (Lineage-21.0)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Builder
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison git python3 libssl-dev libelf-dev clang lld llvm
+
+      - name: Clone Sources
+        run: |
+          # Clonamos la rama lineage-21.0 específicamente
+          git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 -b lineage-21.0 kernel
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b master-kernel-build-2024 clang
+
+      - name: Configure Kernel (Sync with boot.img)
+        run: |
+          cd kernel
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          
+          # Generar configuración base para LG V60/Velvet
+          make O=out vendor/timelm_defconfig
+          
+          # Inyectar CMDLINE exacto del boot.img original para asegurar el arranque
+          scripts/config --objtree out --set-str CONFIG_CMDLINE "androidboot.memcg=1 video=vfb:640x400,bpp=32,memsize=3072000 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 kpti=off cgroup.memory=nokmem,nosocket androidboot.init_fatal_reboot_target=recovery androidboot.hardware=timelm"
+          scripts/config --objtree out --enable CONFIG_CMDLINE_EXTEND
+          
+          # Corregir error de orphan-handling para compatibilidad con Clang moderno
+          sed -i 's/--orphan-handling=warn//g' scripts/Makefile.extrawarn || true
+
+      - name: Compilation
+        run: |
+          cd kernel
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          
+          # Compilación Full LLVM para máxima estabilidad en Android moderno
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LLVM=1 \
+            LLVM_IAS=1
+
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image.gz-dtb-LG-SM8250
+          path: kernel/out/arch/arm64/boot/Image.gz-dtb

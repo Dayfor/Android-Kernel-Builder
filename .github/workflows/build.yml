@@ -1,17 +1,17 @@
-name: "Build kernels #134 - Alcatraz A15"
+name: "Build kernels #134 - Alcatraz A15 Fix"
 
 on:
   workflow_dispatch:
 
 jobs:
   Build-Kernel:
-    name: "🚀 V60 Alcatraz-Optimized Build"
+    name: "🚀 V60 Alcatraz Build"
     runs-on: ubuntu-latest
     steps:
       - name: "🧹 Limpieza"
         run: rm -rf *
 
-      - name: "📦 Instalación de Dependencias"
+      - name: "📦 Dependencias"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -19,15 +19,15 @@ jobs:
           checkpolicy bison flex libncurses5-dev python3 libarchive-tools \
           clang lld llvm
 
-      - name: "🌟 Clonando Fuente (AlcatrazDev)"
+      - name: "🌟 Clonando Fuente (Auto-Branch)"
         run: |
-          # Clonamos el repositorio de Alcatraz para sm8250 (timelm)
-          git clone --branch 14 https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
+          # Intentamos clonar la rama 'main', si falla, clonamos la rama por defecto
+          git clone --branch main https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1 || \
+          git clone https://github.com/AlcatrazDev-Android-Devices/kernel_lge_sm8250 kernel_src --depth=1
 
       - name: "🔧 Inyección de Compatibilidad (A15 Style)"
         working-directory: ./kernel_src
         run: |
-          # Corregir mmu_notifier para Clang 14+ (Requerido para Android 15)
           python3 -c "
           import sys
           path = 'include/linux/mmu_notifier.h'
@@ -37,54 +37,32 @@ jobs:
               content = content.replace('struct mmu_notifier_range {', insertion + 'struct mmu_notifier_range {')
               with open(path, 'w') as f: f.write(content)
           "
-          
-          # Desactivar Werror en Makefiles para este repo específico
           find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
 
       - name: "🛠️ Configuración y Compilación"
         working-directory: ./kernel_src
         run: |
           LLD_PATH=$(which ld.lld)
+          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=$LLD_PATH AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          # Argumentos de compilación optimizados para Alcatraz (LLVM Full)
-          ARGS="ARCH=arm64 \
-                LLVM=1 \
-                LLVM_IAS=1 \
-                CC=clang \
-                LD=$LLD_PATH \
-                AR=llvm-ar \
-                NM=llvm-nm \
-                OBJCOPY=llvm-objcopy \
-                OBJDUMP=llvm-objdump \
-                STRIP=llvm-strip \
-                CLANG_TRIPLE=aarch64-linux-gnu- \
-                CROSS_COMPILE=aarch64-linux-gnu- \
-                CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          echo "📝 Buscando defconfig..."
+          # Intentamos las rutas comunes de Alcatraz
+          make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS vendor/lito-perf_defconfig || make $ARGS defconfig
           
-          echo "📝 Usando vendor/timelm_defconfig..."
-          # Alcatraz usa generalmente la ruta de vendor para el defconfig
-          make $ARGS vendor/timelm_defconfig || make $ARGS timelm_defconfig || make $ARGS defconfig
-          
-          echo "🚀 Compilando Kernel con los parámetros extraídos del boot.img..."
-          # Flags extraídos de tu análisis: kpti=off y gestión de memoria
+          echo "🚀 Compilando..."
           KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-return-type"
-          
           make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
       - name: "📦 Exportar Artefactos"
         if: always()
         run: |
           mkdir -p dist
-          # En Alcatraz el resultado suele estar en arch/arm64/boot/
-          if [ -d "kernel_src/arch/arm64/boot" ]; then
-            find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
-            find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
-          fi
-          # Incluimos los datos del cmdline analizado para el flash final
-          echo "Utilizar este cmdline para boot.img: androidboot.memcg=1 kpti=off cgroup.memory=nokmem,nosocket" > dist/flash_instructions.txt
+          find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
+          find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
+          echo "androidboot.memcg=1 kpti=off cgroup.memory=nokmem,nosocket" > dist/flash_instructions.txt
 
       - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-Alcatraz-A15"
+          name: "Kernel-V60-Alcatraz-A15-Fixed"
           path: dist/

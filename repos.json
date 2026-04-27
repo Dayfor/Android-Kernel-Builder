@@ -9,8 +9,8 @@
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://gitlab.com/Prebuilt-Toolchains/clang-google-18",
-        "branch": "main"
+        "repo": "https://github.com/ZyCromerZ/google-clang",
+        "branch": "clang-18"
       },
       {
         "name": "gcc64",
@@ -24,13 +24,6 @@
       }
     ],
     "params": {
-      "CC": "clang",
-      "LD": "ld.lld",
-      "AR": "llvm-ar",
-      "NM": "llvm-nm",
-      "OBJCOPY": "llvm-objcopy",
-      "OBJDUMP": "llvm-objdump",
-      "STRIP": "llvm-strip",
       "CROSS_COMPILE": "aarch64-linux-android-",
       "CROSS_COMPILE_ARM32": "arm-linux-androideabi-",
       "CLANG_TRIPLE": "aarch64-linux-gnu-"

@@ -9,7 +9,7 @@
     "toolchains": [
       {
         "name": "clang",
-        "repo": "https://github.com/Apon77Lab/android_prebuilts_clang_host_linux-x86_clang-r530567",
+        "repo": "https://gitlab.com/re-work/prebuilts_clang_host_linux-x86_clang-r530567",
         "branch": "main"
       },
       {

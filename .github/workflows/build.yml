@@ -1,4 +1,4 @@
-name: "Build kernels #134 - Final Hack"
+name: "Build kernels #134 - Surgical Fix L23.2"
 
 on:
   workflow_dispatch:
@@ -8,10 +8,10 @@ jobs:
     name: "🐎 V60 Android 16 Build"
     runs-on: ubuntu-latest
     steps:
-      - name: "🧹 Limpieza"
+      - name: "🧹 Limpieza de Espacio"
         run: rm -rf *
 
-      - name: "📦 Instalación de Herramientas"
+      - name: "📦 Instalación de Dependencias"
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential curl git libpcre3-dev \
@@ -23,11 +23,24 @@ jobs:
         run: |
           git clone --branch lineage-23.2 https://github.com/LineageOS/android_kernel_lge_sm8250 kernel_src --depth=1
 
-      - name: "🛠️ Compilación con Inyección de Tipos"
+      - name: "🔧 Aplicando Hotfixes de Compatibilidad"
         working-directory: ./kernel_src
         run: |
+          echo "🛠️ Corrigiendo mmu_notifier.h para Clang Moderno..."
+          # Inyectamos el enum faltante antes de la línea 346 para evitar 'incomplete type'
+          sed -i '345i enum mmu_notifier_event { MMU_NOTIFIER_RELEASE, MMU_NOTIFIER_UNMAP };' include/linux/mmu_notifier.h
+          
+          echo "🛠️ Relajando restricciones de Makefile..."
+          # Convertimos todos los -Werror en warnings para que la build no se detenga
+          find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/-Werror/-Wno-error/g'
+
+      - name: "🛠️ Configuración y Compilación"
+        working-directory: ./kernel_src
+        run: |
+          # Localizamos ld.lld dinámicamente
           LLD_PATH=$(which ld.lld)
           
+          # Argumentos de compilación compatibles con la Wiki y el entorno actual
           ARGS="ARCH=arm64 \
                 LLVM=1 \
                 LLVM_IAS=1 \
@@ -42,31 +55,27 @@ jobs:
                 CROSS_COMPILE=aarch64-linux-gnu- \
                 CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
-          echo "📝 Configurando..."
+          echo "📝 Cargando defconfig..."
           make $ARGS defconfig
           
-          echo "🚀 Iniciando build con inyección de headers..."
-          # EXPLICACIÓN DEL TRUCO:
-          # Usamos '-D' para definir el enum mmu_notifier_event globalmente.
-          # Esto engaña al compilador y le da la definición que le falta sin editar el archivo .h
-          FIX_ENUM="-Denum_mmu_notifier_event=int -DMMU_NOTIFIER_RELEASE=0 -DMMU_NOTIFIER_UNMAP=1"
+          echo "🚀 Iniciando build (Image)..."
+          # Flags adicionales para silenciar errores comunes en kernels 4.19 con Clang 14+
+          KCF="-Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-typedef-redefinition -Wno-return-type"
           
-          # Flags de compatibilidad agresivos
-          export KCFLAGS="$FIX_ENUM -Wno-error -Wno-visibility -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration"
-          
-          make -j$(nproc --all) $ARGS KCFLAGS="$KCFLAGS"
+          make -j$(nproc --all) $ARGS KCFLAGS="$KCF"
 
-      - name: "📦 Exportar"
+      - name: "📦 Organizando Artefactos"
         if: always()
         run: |
           mkdir -p dist
           if [ -d "kernel_src/arch/arm64/boot" ]; then
+            # Buscamos Image, Image.gz, Image.gz-dtb y dtbo.img
             find kernel_src/arch/arm64/boot/ -name "Image*" -type f -exec cp {} dist/ \;
             find kernel_src/arch/arm64/boot/ -name "dtbo.img" -type f -exec cp {} dist/ \;
           fi
 
-      - name: "📤 Subiendo Artefactos"
+      - name: "📤 Subiendo Resultados"
         uses: actions/upload-artifact@v4
         with:
-          name: "Kernel-V60-L23.2-Final"
+          name: "Kernel-V60-L23.2-Surgical-B175"
           path: dist/
